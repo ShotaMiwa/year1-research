@@ -31,9 +31,9 @@ src/
 
 ## Baseline specification (main)
 - Window size: 固定（現行実装）
-- coderence MODEL:cl-tohoku/bert-base-japanese
-- topic MODEL:pkshatech/simcse-ja-bert-base-clcmlp
-- Input: transcript only (comments optional)
+- Coherence MODEL:cl-tohoku/bert-base-japanese
+- Topic MODEL:pkshatech/simcse-ja-bert-base-clcmlp
+- Input: json (comments optional)
 - Output: 
 
 ## Environment
