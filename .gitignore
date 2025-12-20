@@ -1,7 +1,7 @@
-.venv/
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
 data/
+outputs/
+__pycache__/
 *.pt
-*.xlsx
+*.ckpt
+*.csv
+
