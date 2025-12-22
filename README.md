@@ -1,40 +1,33 @@
 # year1-research
 
-## Purpose
-Baseline implementation for topic boundary detection using
-YouTube transcript data.
+## Overview
+This repository contains code for training a dialogue/topic segmentation model.
+The model jointly optimizes:
+- Coherence modeling based on sentence order (NSP-style)
+- Topic consistency modeling using utterance and comment representations
 
-This repository contains a **minimal, reproducible reference
-implementation** used as the main branch.
+## Method
+The model jointly learns:
+1. Coherence loss based on sentence adjacency (NSP-style input)
+2. Topic loss using contrastive learning over utterance representations
+3. (Optional) Comment-aware topic modeling using averaged comment embeddings
 
-## Main branch policy
-- `main` branch contains only:
-  - Verified working code
-  - Fixed hyperparameters
-  - No experimental hacks
-- All experiments are conducted in `exp-*` branches.
+## Data Format
+Training data must be provided as `.pt` files saved with `torch.save`.
 
-## Code structure
-src/
-├─ train.py # model training
-├─ model.py # model definition
-├─ test3_csv_rand.py # evaluation / inference
-└─ data_creaters/
-└─ 簡易化版/
-├─ create_inference_data.py
-├─ common_transcript_processing.py
-└─ test_window.py
+Each file should contain a dictionary with at least the following keys:
+- sentences: list of utterances
+- coheren_inputs: tensor for NSP-style coherence modeling
+- coheren_masks
+- coheren_types
+- sub_ids_simcse: utterance-level token ids (SimCSE)
+- com_vecs: comment embedding vectors per utterance
 
-## Data
-- Data files are NOT tracked by git.
-- Place all data under `data/`.
-
-## Baseline specification (main)
-- Window size: 固定（現行実装）
-- Coherence MODEL:cl-tohoku/bert-base-japanese
-- Topic MODEL:pkshatech/simcse-ja-bert-base-clcmlp
-- Input: json (comments optional)
-- Output: 
+## Training
+The training script supports:
+- single file input
+- directory input (multiple `.pt` files)
+- wildcard patterns
 
 ## Environment
 - OS: Ubuntu (WSL)
