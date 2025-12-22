@@ -19,18 +19,6 @@ class MarginRankingLoss():
         scores = scores.clamp(min=0)
         return scores.mean()
 
-class CommentFusionLayer(nn.Module):
-    def __init__(self, utterance_dim, comment_dim, output_dim):
-        super(CommentFusionLayer, self).__init__()
-        self.linear = nn.Linear(utterance_dim + comment_dim, output_dim)
-        self.layer_norm = nn.LayerNorm(output_dim)
-        
-    def forward(self, utterance_vec, comment_vec):
-        combined = torch.cat([utterance_vec, comment_vec], dim=-1)
-        fused = self.linear(combined)
-        fused = self.layer_norm(fused)
-        return fused
-
 class AverageFusionLayer(nn.Module):
     """
     発話ベクトルとコメントベクトルの単純平均を取る層
@@ -60,16 +48,18 @@ class SegModel(nn.Module):
                  coherence_model_name="cl-tohoku/bert-base-japanese",  
                  topic_model_name="pkshatech/simcse-ja-bert-base-clcmlp",  
                  use_comments_for_topic=True,
-                 fusion_method='average'):  # 新しいパラメータ追加
+                 fusion_method='average'):  # 平均融合のみをサポート
         super(SegModel, self).__init__()
         self.margin = margin
         self.train_split = train_split
         self.window_size = window_size
         self.use_pretrained_only = use_pretrained_only
         self.use_comments_for_topic = use_comments_for_topic
-        self.fusion_method = fusion_method  # 'average' または 'linear'
         
-        print(f"モデル初期化: Coherence={coherence_model_name}, Topic={topic_model_name}, UseComments={use_comments_for_topic}, Fusion={fusion_method}")
+        # 融合方法は常にaverageのみ
+        self.fusion_method = 'average'
+        
+        print(f"モデル初期化: Coherence={coherence_model_name}, Topic={topic_model_name}, UseComments={use_comments_for_topic}")
         
         # モデル名をパラメータ化
         self.coherence_model_name = coherence_model_name
@@ -99,27 +89,15 @@ class SegModel(nn.Module):
                 output_hidden_states=True
             )
         
-        # 融合層の選択
+        # 平均融合層のみを保持
         if self.use_comments_for_topic:
-            if fusion_method == 'average':
-                # 新しい平均融合層
-                self.comment_fusion = AverageFusionLayer()
-                print("✅ 平均融合層を使用（発話ベクトル + コメントベクトルの平均）")
-            elif fusion_method == 'linear':
-                # 既存の線形結合層
-                self.comment_fusion = CommentFusionLayer(
-                    utterance_dim=utterance_dim,
-                    comment_dim=comment_dim,
-                    output_dim=fused_dim
-                )
-                print("✅ 線形融合層を使用")
-            else:
-                raise ValueError(f"未知の融合方法: {fusion_method}")
+            self.comment_fusion = AverageFusionLayer()
+            print("✅ 平均融合層を使用（発話ベクトル + コメントベクトルの平均）")
         else:
             self.comment_fusion = None
             print("⚠️ コメント不使用モード")
         
-        # 事前学習モデルのみを使用する場合は損失関数を不要に
+        # 事前学習モデルののみを使用する場合は損失関数を不要に
         if not use_pretrained_only:
             self.topic_loss = nn.CrossEntropyLoss()
             self.score_loss = MarginRankingLoss(self.margin)
@@ -243,21 +221,19 @@ class SegModel(nn.Module):
     def infer(self, coheren_input, coheren_mask, coheren_type_id, 
             topic_input=None, topic_mask=None, topic_comments=None, topic_num=None,
             use_comments_for_topic=None, 
-            fusion_method=None,  # 新しい引数（推論時に融合方法を変更可能）
+            fusion_method=None,  # 引数は無視（常にaverageを使用）
             global_coherence_mean=None, global_coherence_std=None,
             global_topic_mean=None, global_topic_std=None):
         """
         推論実行
         Args:
             use_comments_for_topic: コメント使用フラグ
-            fusion_method: 融合方法（'average' または 'linear'）
-            global_coherence_mean, global_coherence_std: グローバルなコヒーレンス統計
-            global_topic_mean, global_topic_std: グローバルなトピック統計
+            fusion_method: 無視される（常にaverageを使用）
         """
         device = coheren_input.device
         
-        # 融合方法の決定（引数＞クラス設定）
-        fusion_type = fusion_method if fusion_method is not None else self.fusion_method
+        # 融合方法は常にaverage
+        fusion_type = 'average'
         
         # コメント使用フラグの決定（引数が指定されればそれを使用、否则はクラス設定を使用）
         use_comments = use_comments_for_topic if use_comments_for_topic is not None else self.use_comments_for_topic
@@ -291,7 +267,7 @@ class SegModel(nn.Module):
             topic_comments_0 = topic_comments[0].unsqueeze(0) if topic_comments[0].dim() == 1 else topic_comments[0]
             topic_comments_1 = topic_comments[1].unsqueeze(0) if topic_comments[1].dim() == 1 else topic_comments[1]
             
-            # 融合実行
+            # 平均融合実行
             topic_context = self.comment_fusion(topic_context_utterance, topic_comments_0)
             topic_cur = self.comment_fusion(topic_cur_utterance, topic_comments_1)
         else:

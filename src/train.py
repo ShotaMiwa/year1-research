@@ -277,6 +277,7 @@ def main(args):
     scaler = amp.GradScaler(enabled=(not args.no_amp))
     
     # モデル初期化 - 日本語モデル対応
+    # 注意: トレーニング時はコメントを使用しない（use_comments=False）
     model = SegModel(
         margin=args.margin, 
         train_split=args.train_split, 
@@ -284,7 +285,8 @@ def main(args):
         utterance_dim=768,  # 日本語BERTの隠れ次元数
         comment_dim=768,    # SimCSEの出力次元
         fused_dim=768,      # 融合後の次元数
-        use_comments_for_topic=args.use_comments  # コメント使用フラグを追加
+        use_comments_for_topic=False,  # トレーニング時はコメントを使用しない
+        fusion_method='average'  # 平均融合を指定（テスト時用）
     ).to(args.device)
     
     if args.resume and args.ckpt:
@@ -403,7 +405,6 @@ if __name__ == '__main__':
     parser.add_argument("--margin", type=int, default=1)
     parser.add_argument("--train_split", type=int, default=5)
     parser.add_argument("--window_size", type=int, default=5)
-    parser.add_argument("--use_comments", action='store_true', help="Use comments for topic modeling (default: False)")
     
     # 訓練パラメータ
     parser.add_argument("--ckpt", help="Checkpoint path to resume from")
@@ -418,7 +419,7 @@ if __name__ == '__main__':
     
     # デバイス設定
     parser.add_argument("--no_amp", action='store_true', help="Disable automatic mixed precision")
-    parser.add_argument("--no_cuda", action='store_true', help="Disable CUDA")
+    parser.add_argument("--no_cuda", action='store_true", help="Disable CUDA")
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training")
     
     args = parser.parse_args()
@@ -443,7 +444,7 @@ if __name__ == '__main__':
     print(f"Using device: {device}")
     print(f"Number of GPUs: {args.n_gpu}")
     print(f"Training arguments: {args}")
-    print(f"Use comments for topic modeling: {args.use_comments}")
+    print(f"Note: Training without comments (use_comments_for_topic=False)")
     
     epoch_loss = main(args)
     

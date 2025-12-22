@@ -25,8 +25,8 @@ MODEL_CONFIGS = {
         "topic_model": "pkshatech/simcse-ja-bert-base-clcmlp",
         "inference_data_path": f"{INFERENCE_DATA_BASE_DIR}/default/inference_data.json",
         "model_checkpoint": "/content/drive/MyDrive/seg_models/hiroyuki_model/epoch_4_step_918",  # 学習済みモデルのパス
-        "use_comments_for_topic": True,  # コメント使用フラグ（True: コメント使用, False: 不使用）
-        "fusion_method": "average"  # 融合方法（'average': 平均融合, 'linear': 線形融合）
+        "use_comments_for_topic": True,  # テスト時はコメントを使用
+        "fusion_method": "average"  # 平均融合のみを使用
     }
 }
 
@@ -607,7 +607,7 @@ def run_inference_for_model(model_name, model_config):
                 coherence_model_name=model_config["coherence_model"],
                 topic_model_name=model_config["topic_model"],
                 use_comments_for_topic=model_config.get("use_comments_for_topic", True),  # コメント使用フラグ
-                fusion_method=model_config.get("fusion_method", "average")  # 融合方法
+                fusion_method=model_config.get("fusion_method", "average")  # 平均融合のみ
             )
             # 学習済み重みをロード
             model.load_state_dict(torch.load(model_config["model_checkpoint"], map_location=DEVICE))
@@ -619,7 +619,7 @@ def run_inference_for_model(model_name, model_config):
                 coherence_model_name=model_config["coherence_model"],
                 topic_model_name=model_config["topic_model"],
                 use_comments_for_topic=model_config.get("use_comments_for_topic", True),  # コメント使用フラグ
-                fusion_method=model_config.get("fusion_method", "average")  # 融合方法
+                fusion_method=model_config.get("fusion_method", "average")  # 平均融合のみ
             )
             print(f"✅ 事前学習モデルをロード: {model_config['coherence_model']}, {model_config['topic_model']}")
         
@@ -752,7 +752,7 @@ def run_inference_for_model(model_name, model_config):
                     coheren_input, coheren_mask, coheren_type, 
                     topic_i, topic_m, topic_comments, topic_num,
                     use_comments_for_topic=model_config.get("use_comments_for_topic", True),
-                    fusion_method=model_config.get("fusion_method", "average"),
+                    fusion_method=model_config.get("fusion_method", "average"),  # 平均融合のみ
                     global_coherence_mean=global_coherence_mean,
                     global_coherence_std=global_coherence_std,
                     global_topic_mean=global_topic_mean,
