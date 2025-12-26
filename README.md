@@ -33,3 +33,16 @@ The training script supports:
 - OS: Ubuntu (WSL)
 - Python: 3.12.12
 - Framework: PyTorch, Transformers
+
+## Running on Google Colab
+This repository is designed to run on Google Colab
+without modifying the directory structure.
+
+
+## 1. Clone the repository 
+
+Run the follwing commands in a Colab cell:
+
+```bash
+!git clone git@github.com:ShotaMiwa/year1-research.git
+%cd year1-research
