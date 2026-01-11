@@ -15,6 +15,7 @@ implementation** used as the main branch.
 - All experiments are conducted in `exp-*` branches.
 
 ## Code structure
+```
 src/
 ├─ train.py # model training
 ├─ model.py # model definition
@@ -24,7 +25,7 @@ src/
 ├─ create_inference_data.py
 ├─ common_transcript_processing.py
 └─ test_window.py
-
+```
 ## Data
 - Data files are NOT tracked by git.
 - Place all data under `data/`.
