@@ -9,7 +9,7 @@ from transformers.models.bert.modeling_bert import *
 from typing import Optional, Tuple  
 from transformers.models.bert.modeling_bert import BertOnlyNSPHead
 from transformers.modeling_outputs import NextSentencePredictorOutput
-
+#test
 
 class MarginRankingLoss():
     def __init__(self, margin):
