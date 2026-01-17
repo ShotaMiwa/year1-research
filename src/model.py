@@ -9,7 +9,6 @@ from transformers.models.bert.modeling_bert import *
 from typing import Optional, Tuple  
 from transformers.models.bert.modeling_bert import BertOnlyNSPHead
 from transformers.modeling_outputs import NextSentencePredictorOutput
-#test
 
 class MarginRankingLoss():
     def __init__(self, margin):
@@ -100,20 +99,20 @@ class SegModel(nn.Module):
                 output_hidden_states=True
             )
         
-        # 融合層の選択
+        # 推論用の融合層のみ保持（学習時は使用しない）
         if self.use_comments_for_topic:
             if fusion_method == 'average':
-                # 新しい平均融合層
+                # 推論用の平均融合層
                 self.comment_fusion = AverageFusionLayer()
-                print("✅ 平均融合層を使用（発話ベクトル + コメントベクトルの平均）")
+                print("✅ 推論用平均融合層を初期化")
             elif fusion_method == 'linear':
-                # 既存の線形結合層
+                # 推論用の線形結合層
                 self.comment_fusion = CommentFusionLayer(
                     utterance_dim=utterance_dim,
                     comment_dim=comment_dim,
                     output_dim=fused_dim
                 )
-                print("✅ 線形融合層を使用")
+                print("✅ 推論用線形融合層を初期化")
             else:
                 raise ValueError(f"未知の融合方法: {fusion_method}")
         else:
@@ -182,40 +181,21 @@ class SegModel(nn.Module):
 
         batch_size = len(input_data['topic_context_num'])
         
-        topic_context_utterance = self.topic_model(
+        # 学習時はコメント融合を行わず、発話ベクトルのみを使用
+        topic_context = self.topic_model(
             input_ids=input_data['topic_context'],
             attention_mask=input_data['topic_context_mask']
         ).last_hidden_state[:, 0, :]
         
-        topic_pos_utterance = self.topic_model(
+        topic_pos = self.topic_model(
             input_ids=input_data['topic_pos'],
             attention_mask=input_data['topic_pos_mask']
         ).last_hidden_state[:, 0, :]
         
-        topic_neg_utterance = self.topic_model(
+        topic_neg = self.topic_model(
             input_ids=input_data['topic_neg'],
             attention_mask=input_data['topic_neg_mask']
         ).last_hidden_state[:, 0, :]
-        
-        # コメント使用フラグに基づいて融合処理を分岐
-        if self.use_comments_for_topic and self.comment_fusion is not None:
-            topic_context = self.comment_fusion(
-                topic_context_utterance, 
-                input_data['topic_context_comments']
-            )
-            topic_pos = self.comment_fusion(
-                topic_pos_utterance, 
-                input_data['topic_pos_comments']
-            )
-            topic_neg = self.comment_fusion(
-                topic_neg_utterance, 
-                input_data['topic_neg_comments']
-            )
-        else:
-            # コメントを使用しない場合は発話ベクトルのみを使用
-            topic_context = topic_context_utterance
-            topic_pos = topic_pos_utterance
-            topic_neg = topic_neg_utterance
         
         topic_loss = self.topic_train(input_data, window_size)
 
@@ -376,24 +356,14 @@ class SegModel(nn.Module):
             # データの取得
             local_topic_train = input_data['topic_train'][start_idx:end_idx]
             local_mask = input_data['topic_train_mask'][start_idx:end_idx]
-            local_comments = input_data['topic_train_comments'][b, start_idx:end_idx]
             
             # メモリ効率化: 明示的な勾配計算制御
             with torch.set_grad_enabled(True):
-                local_utterance = self.topic_model(
+                # 学習時は発話ベクトルのみを使用
+                local_fused = self.topic_model(
                     input_ids=local_topic_train.to(device),
                     attention_mask=local_mask.to(device)
                 ).last_hidden_state[:, 0, :]
-            
-            # コメント融合（コメント使用フラグに基づいて分岐）
-            if self.use_comments_for_topic and self.comment_fusion is not None:
-                if local_comments.dim() == 3:
-                    local_comments = local_comments.squeeze(0)
-                
-                local_fused = self.comment_fusion(local_utterance, local_comments.to(device))
-            else:
-                # コメントを使用しない場合は発話ベクトルのみを使用
-                local_fused = local_utterance
             
             # 疑似セグメンテーション処理
             cur_loss = self._process_local_segmentation(
@@ -409,7 +379,7 @@ class SegModel(nn.Module):
                 margin_count += 1
                 
             # メモリ解放
-            del local_utterance, local_fused
+            del local_fused
             torch.cuda.empty_cache()
         
         return topic_loss / margin_count if margin_count > 0 else topic_loss

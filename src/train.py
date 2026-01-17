@@ -18,6 +18,7 @@ from torch.utils.data import TensorDataset, DataLoader, RandomSampler, Sequentia
 from transformers import BertForNextSentencePrediction, BertConfig, get_linear_schedule_with_warmup, set_seed, AutoModel
 from torch.optim import AdamW  
 import glob
+#コードのクリーニング　使用していないところを削除
 
 def get_mask(tensor):
     attention_masks = []
@@ -48,19 +49,11 @@ class ourdataset(Dataset):
         topic_context = pad_sequence([torch.tensor(ex[3]) for ex in examples], batch_first=True)
         topic_pos = pad_sequence([torch.tensor(ex[4]) for ex in examples], batch_first=True)
         topic_neg = pad_sequence([torch.tensor(ex[5]) for ex in examples], batch_first=True)
-
-        # コメントベクトルを平均化して [batch, hidden_dim] に統一
-        def avg_comment(c):
-            if isinstance(c, torch.Tensor):
-                if c.dim() == 1:
-                    return c
-                elif c.dim() == 2:
-                    return c.mean(dim=0)
-            raise ValueError(f"Unexpected comment shape: {type(c)} {getattr(c, 'shape', None)}")
-
-        topic_context_comments = torch.stack([avg_comment(ex[6]) for ex in examples])
-        topic_pos_comments = torch.stack([avg_comment(ex[7]) for ex in examples])
-        topic_neg_comments = torch.stack([avg_comment(ex[8]) for ex in examples])
+        
+        # 学習時はコメントベクトルをダミーデータで作成（実際には使用しない）
+        topic_context_comments = torch.zeros(batch_size, 768)  # ダミー
+        topic_pos_comments = torch.zeros(batch_size, 768)      # ダミー
+        topic_neg_comments = torch.zeros(batch_size, 768)      # ダミー
         
         topic_context_num = [ex[9] for ex in examples]
         topic_pos_num = [ex[10] for ex in examples]
@@ -78,10 +71,8 @@ class ourdataset(Dataset):
             batch_first=True
         )
 
-        topic_train_comments = pad_sequence(
-            [ex[14] if isinstance(ex[14], torch.Tensor) else torch.stack(ex[14]) for ex in examples],
-            batch_first=True
-        )
+        # 学習時はコメントデータを使用しない（ダミーデータ）
+        topic_train_comments = torch.zeros(len(topic_train), 768)  # ダミー
 
         topic_num = [ex[15] for ex in examples]
 
@@ -154,10 +145,10 @@ class MultiFileDataset(Dataset):
                 pos_ids = loaded_data["sub_ids_simcse"][min(pos_idx + 1, total_utterances - 1)]
                 neg_ids = loaded_data["sub_ids_simcse"][neg_idx]
 
-                # --- コメント埋め込み ---
-                context_comment = loaded_data["com_vecs"][pos_idx]
-                pos_comment = loaded_data["com_vecs"][min(pos_idx + 1, total_utterances - 1)]
-                neg_comment = loaded_data["com_vecs"][neg_idx]
+                # 学習時はコメント埋め込みを使用しない（ダミーデータ）
+                context_comment = torch.zeros(768)  # ダミー
+                pos_comment = torch.zeros(768)      # ダミー
+                neg_comment = torch.zeros(768)      # ダミー
 
                 sample = (
                     coheren_input,
@@ -174,7 +165,7 @@ class MultiFileDataset(Dataset):
                     1,  # topic_neg_num
                     loaded_data["sub_ids_simcse"],  # topic_train (全発話)
                     [1] * len(loaded_data["sub_ids_simcse"]),  # topic_train_mask
-                    loaded_data["com_vecs"],  # topic_train_comments (全コメントベクトル)
+                    [torch.zeros(768) for _ in range(len(loaded_data["sub_ids_simcse"]))],  # ダミーコメント
                     (total_utterances, current_utt)  # topic_num
                 )
 
@@ -202,19 +193,11 @@ class MultiFileDataset(Dataset):
         topic_context = pad_sequence([torch.tensor(ex[3]) for ex in examples], batch_first=True)
         topic_pos = pad_sequence([torch.tensor(ex[4]) for ex in examples], batch_first=True)
         topic_neg = pad_sequence([torch.tensor(ex[5]) for ex in examples], batch_first=True)
-
-        # コメントベクトルを平均化して [batch, hidden_dim] に統一
-        def avg_comment(c):
-            if isinstance(c, torch.Tensor):
-                if c.dim() == 1:
-                    return c
-                elif c.dim() == 2:
-                    return c.mean(dim=0)
-            raise ValueError(f"Unexpected comment shape: {type(c)} {getattr(c, 'shape', None)}")
-
-        topic_context_comments = torch.stack([avg_comment(ex[6]) for ex in examples])
-        topic_pos_comments = torch.stack([avg_comment(ex[7]) for ex in examples])
-        topic_neg_comments = torch.stack([avg_comment(ex[8]) for ex in examples])
+        
+        # 学習時はコメントベクトルをダミーデータで作成（実際には使用しない）
+        topic_context_comments = torch.zeros(batch_size, 768)  # ダミー
+        topic_pos_comments = torch.zeros(batch_size, 768)      # ダミー
+        topic_neg_comments = torch.zeros(batch_size, 768)      # ダミー
         
         topic_context_num = [ex[9] for ex in examples]
         topic_pos_num = [ex[10] for ex in examples]
@@ -232,10 +215,8 @@ class MultiFileDataset(Dataset):
             batch_first=True
         )
 
-        topic_train_comments = pad_sequence(
-            [ex[14] if isinstance(ex[14], torch.Tensor) else torch.stack(ex[14]) for ex in examples],
-            batch_first=True
-        )
+        # 学習時はコメントデータを使用しない（ダミーデータ）
+        topic_train_comments = torch.zeros(len(topic_train), 768)  # ダミー
 
         topic_num = [ex[15] for ex in examples]
 
