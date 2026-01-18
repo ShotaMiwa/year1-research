@@ -18,7 +18,6 @@ from torch.utils.data import TensorDataset, DataLoader, RandomSampler, Sequentia
 from transformers import BertForNextSentencePrediction, BertConfig, get_linear_schedule_with_warmup, set_seed, AutoModel
 from torch.optim import AdamW  
 import glob
-#コードのクリーニング　使用していないところを削除
 
 def get_mask(tensor):
     attention_masks = []
@@ -45,19 +44,14 @@ class ourdataset(Dataset):
         coheren_mask = pad_sequence([ex[1] for ex in examples], batch_first=True)
         coheren_type = pad_sequence([ex[2] for ex in examples], batch_first=True)
 
-        # --- Topicデータ ---
+        # --- Topicデータ（コメントなし）---
         topic_context = pad_sequence([torch.tensor(ex[3]) for ex in examples], batch_first=True)
         topic_pos = pad_sequence([torch.tensor(ex[4]) for ex in examples], batch_first=True)
         topic_neg = pad_sequence([torch.tensor(ex[5]) for ex in examples], batch_first=True)
         
-        # 学習時はコメントベクトルをダミーデータで作成（実際には使用しない）
-        topic_context_comments = torch.zeros(batch_size, 768)  # ダミー
-        topic_pos_comments = torch.zeros(batch_size, 768)      # ダミー
-        topic_neg_comments = torch.zeros(batch_size, 768)      # ダミー
-        
-        topic_context_num = [ex[9] for ex in examples]
-        topic_pos_num = [ex[10] for ex in examples]
-        topic_neg_num = [ex[11] for ex in examples]
+        topic_context_num = [ex[6] for ex in examples]
+        topic_pos_num = [ex[7] for ex in examples]
+        topic_neg_num = [ex[8] for ex in examples]
 
         topic_context_mask, topic_pos_mask, topic_neg_mask = (
             get_mask(topic_context),
@@ -65,24 +59,20 @@ class ourdataset(Dataset):
             get_mask(topic_neg)
         )
 
-        topic_train = pad_sequence([torch.tensor(ids) for ex in examples for ids in ex[12]], batch_first=True)
+        topic_train = pad_sequence([torch.tensor(ids) for ex in examples for ids in ex[9]], batch_first=True)
         topic_train_mask = pad_sequence(
-            [torch.ones(len(ids), dtype=torch.long) for ex in examples for ids in ex[12]],
+            [torch.ones(len(ids), dtype=torch.long) for ex in examples for ids in ex[9]],
             batch_first=True
         )
 
-        # 学習時はコメントデータを使用しない（ダミーデータ）
-        topic_train_comments = torch.zeros(len(topic_train), 768)  # ダミー
-
-        topic_num = [ex[15] for ex in examples]
+        topic_num = [ex[10] for ex in examples]
 
         return (
             coheren_inputs, coheren_mask, coheren_type, 
             topic_context, topic_pos, topic_neg,
-            topic_context_comments, topic_pos_comments, topic_neg_comments,
             topic_context_mask, topic_pos_mask, topic_neg_mask,
             topic_context_num, topic_pos_num, topic_neg_num,
-            topic_train, topic_train_mask, topic_train_comments, topic_num
+            topic_train, topic_train_mask, topic_num
         )
 
 class MultiFileDataset(Dataset):
@@ -106,7 +96,7 @@ class MultiFileDataset(Dataset):
         self._prepare_samples()
         
     def _prepare_samples(self):
-        """すべてのデータファイルからサンプルを準備"""
+        """すべてのデータファイルからサンプルを準備（コメントなし）"""
         total_samples = 0
         
         for file_idx, loaded_data in enumerate(self.loaded_data_list):
@@ -140,15 +130,10 @@ class MultiFileDataset(Dataset):
                 while neg_idx == pos_idx:
                     neg_idx = random.randint(0, total_utterances - 1)
 
-                # --- SimCSE入力 ---
+                # --- SimCSE入力（コメントなし）---
                 context_ids = loaded_data["sub_ids_simcse"][pos_idx]
                 pos_ids = loaded_data["sub_ids_simcse"][min(pos_idx + 1, total_utterances - 1)]
                 neg_ids = loaded_data["sub_ids_simcse"][neg_idx]
-
-                # 学習時はコメント埋め込みを使用しない（ダミーデータ）
-                context_comment = torch.zeros(768)  # ダミー
-                pos_comment = torch.zeros(768)      # ダミー
-                neg_comment = torch.zeros(768)      # ダミー
 
                 sample = (
                     coheren_input,
@@ -157,15 +142,10 @@ class MultiFileDataset(Dataset):
                     context_ids,
                     pos_ids,
                     neg_ids,
-                    context_comment,
-                    pos_comment,
-                    neg_comment,
                     1,  # topic_context_num
                     1,  # topic_pos_num  
                     1,  # topic_neg_num
                     loaded_data["sub_ids_simcse"],  # topic_train (全発話)
-                    [1] * len(loaded_data["sub_ids_simcse"]),  # topic_train_mask
-                    [torch.zeros(768) for _ in range(len(loaded_data["sub_ids_simcse"]))],  # ダミーコメント
                     (total_utterances, current_utt)  # topic_num
                 )
 
@@ -181,7 +161,7 @@ class MultiFileDataset(Dataset):
         return len(self.all_samples)
     
     def collect_fn(self, examples):
-        # 元のcollect_fnを再利用
+        # collect_fnの実装
         batch_size = len(examples)
         
         # --- Coherence ---
@@ -189,19 +169,14 @@ class MultiFileDataset(Dataset):
         coheren_mask = pad_sequence([ex[1] for ex in examples], batch_first=True)
         coheren_type = pad_sequence([ex[2] for ex in examples], batch_first=True)
 
-        # --- Topicデータ ---
+        # --- Topicデータ（コメントなし）---
         topic_context = pad_sequence([torch.tensor(ex[3]) for ex in examples], batch_first=True)
         topic_pos = pad_sequence([torch.tensor(ex[4]) for ex in examples], batch_first=True)
         topic_neg = pad_sequence([torch.tensor(ex[5]) for ex in examples], batch_first=True)
         
-        # 学習時はコメントベクトルをダミーデータで作成（実際には使用しない）
-        topic_context_comments = torch.zeros(batch_size, 768)  # ダミー
-        topic_pos_comments = torch.zeros(batch_size, 768)      # ダミー
-        topic_neg_comments = torch.zeros(batch_size, 768)      # ダミー
-        
-        topic_context_num = [ex[9] for ex in examples]
-        topic_pos_num = [ex[10] for ex in examples]
-        topic_neg_num = [ex[11] for ex in examples]
+        topic_context_num = [ex[6] for ex in examples]
+        topic_pos_num = [ex[7] for ex in examples]
+        topic_neg_num = [ex[8] for ex in examples]
 
         topic_context_mask, topic_pos_mask, topic_neg_mask = (
             get_mask(topic_context),
@@ -209,40 +184,32 @@ class MultiFileDataset(Dataset):
             get_mask(topic_neg)
         )
 
-        topic_train = pad_sequence([torch.tensor(ids) for ex in examples for ids in ex[12]], batch_first=True)
+        topic_train = pad_sequence([torch.tensor(ids) for ex in examples for ids in ex[9]], batch_first=True)
         topic_train_mask = pad_sequence(
-            [torch.ones(len(ids), dtype=torch.long) for ex in examples for ids in ex[12]],
+            [torch.ones(len(ids), dtype=torch.long) for ex in examples for ids in ex[9]],
             batch_first=True
         )
 
-        # 学習時はコメントデータを使用しない（ダミーデータ）
-        topic_train_comments = torch.zeros(len(topic_train), 768)  # ダミー
-
-        topic_num = [ex[15] for ex in examples]
+        topic_num = [ex[10] for ex in examples]
 
         return (
             coheren_inputs, coheren_mask, coheren_type, 
             topic_context, topic_pos, topic_neg,
-            topic_context_comments, topic_pos_comments, topic_neg_comments,
             topic_context_mask, topic_pos_mask, topic_neg_mask,
             topic_context_num, topic_pos_num, topic_neg_num,
-            topic_train, topic_train_mask, topic_train_comments, topic_num
+            topic_train, topic_train_mask, topic_num
         )
 
-# train.py のデータ整形部分を修正
 def main(args):
-    # データパスの解決（単一ファイルまたはディレクトリ）
+    # データパスの解決
     data_paths = []
     if os.path.isfile(args.data_path):
-        # 単一ファイルの場合
         data_paths = [args.data_path]
     elif os.path.isdir(args.data_path):
-        # ディレクトリの場合、すべてのptファイルを取得
         data_paths = glob.glob(os.path.join(args.data_path, "*.pt"))
         if not data_paths:
             raise ValueError(f"No .pt files found in directory: {args.data_path}")
     else:
-        # ワイルドカードパターンの場合
         data_paths = glob.glob(args.data_path)
         if not data_paths:
             raise ValueError(f"No files match pattern: {args.data_path}")
@@ -257,15 +224,16 @@ def main(args):
 
     scaler = amp.GradScaler(enabled=(not args.no_amp))
     
-    # モデル初期化 - 日本語モデル対応
+    # モデル初期化 - 学習時はコメント不使用
     model = SegModel(
         margin=args.margin, 
         train_split=args.train_split, 
         window_size=args.window_size,
-        utterance_dim=768,  # 日本語BERTの隠れ次元数
-        comment_dim=768,    # SimCSEの出力次元
-        fused_dim=768,      # 融合後の次元数
-        use_comments_for_topic=args.use_comments  # コメント使用フラグを追加
+        use_pretrained_only=False,
+        coherence_model_name="cl-tohoku/bert-base-japanese",
+        topic_model_name="pkshatech/simcse-ja-bert-base-clcmlp",
+        use_comments_for_topic=False,  # 学習時はFalse
+        fusion_method="average"  # 推論用（学習時は使用しない）
     ).to(args.device)
     
     if args.resume and args.ckpt:
@@ -292,7 +260,7 @@ def main(args):
         window_size = args.window_size
 
         for step, batch in enumerate(epoch_iterator):
-            # 新しいデータ形式に合わせてinput_dataを構築
+            # 入力データ構築（コメントなし）
             input_data = {
                 'coheren_inputs': batch[0].to(args.device),
                 'coheren_mask': batch[1].to(args.device), 
@@ -300,19 +268,15 @@ def main(args):
                 'topic_context': batch[3].to(args.device),
                 'topic_pos': batch[4].to(args.device),
                 'topic_neg': batch[5].to(args.device),
-                'topic_context_comments': batch[6].to(args.device),
-                'topic_pos_comments': batch[7].to(args.device),
-                'topic_neg_comments': batch[8].to(args.device),
-                'topic_context_mask': batch[9].to(args.device),
-                'topic_pos_mask': batch[10].to(args.device),
-                'topic_neg_mask': batch[11].to(args.device),
-                'topic_context_num': batch[12],
-                'topic_pos_num': batch[13],
-                'topic_neg_num': batch[14],
-                'topic_train': batch[15].to(args.device),
-                'topic_train_mask': batch[16].to(args.device),
-                'topic_train_comments': batch[17].to(args.device),
-                'topic_num': batch[18]
+                'topic_context_mask': batch[6].to(args.device),
+                'topic_pos_mask': batch[7].to(args.device),
+                'topic_neg_mask': batch[8].to(args.device),
+                'topic_context_num': batch[9],
+                'topic_pos_num': batch[10],
+                'topic_neg_num': batch[11],
+                'topic_train': batch[12].to(args.device),
+                'topic_train_mask': batch[13].to(args.device),
+                'topic_num': batch[14]
             }
 
             model.zero_grad()
@@ -376,7 +340,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     
-    # データ関連 - 単一ファイル、ディレクトリ、またはワイルドカードパターンをサポート
+    # データ関連
     parser.add_argument("--data_path", required=True, help="Path to preprocessed data file, directory, or pattern")
     parser.add_argument("--save_model_name", required=True, help="Name for saving the model")
     
@@ -384,7 +348,6 @@ if __name__ == '__main__':
     parser.add_argument("--margin", type=int, default=1)
     parser.add_argument("--train_split", type=int, default=5)
     parser.add_argument("--window_size", type=int, default=5)
-    parser.add_argument("--use_comments", action='store_true', help="Use comments for topic modeling (default: False)")
     
     # 訓練パラメータ
     parser.add_argument("--ckpt", help="Checkpoint path to resume from")
@@ -424,7 +387,7 @@ if __name__ == '__main__':
     print(f"Using device: {device}")
     print(f"Number of GPUs: {args.n_gpu}")
     print(f"Training arguments: {args}")
-    print(f"Use comments for topic modeling: {args.use_comments}")
+    print(f"学習時: コメント完全不使用モード")
     
     epoch_loss = main(args)
     
