@@ -1,0 +1,5570 @@
+
+--- ./.gitignore ---
+data/
+outputs/
+__pycache__/
+*.pt
+*.ckpt
+*.csv
+
+.venv/
+
+--- ./README.md ---
+# year1-research
+
+## Purpose
+Baseline implementation for topic boundary detection using
+YouTube transcript data.
+
+This repository contains a **minimal, reproducible reference
+implementation** used as the main branch.
+
+## Main branch policy
+- `main` branch contains only:
+  - Verified working code
+  - Fixed hyperparameters
+  - No experimental hacks
+- All experiments are conducted in `exp-*` branches.
+
+## Code structure
+```
+src/
+├─ train.py # model training
+├─ model.py # model definition
+├─ test3_csv_rand.py # evaluation / inference
+└─ data_creaters/
+└─ 簡易化版/
+├─ create_inference_data.py
+├─ common_transcript_processing.py
+└─ test_window.py
+```
+## Data
+- Data files are NOT tracked by git.
+- Place all data under `data/`.
+
+## Baseline specification (main)
+- Window size: 固定（現行実装）
+- Coherence MODEL:cl-tohoku/bert-base-japanese
+- Topic MODEL:pkshatech/simcse-ja-bert-base-clcmlp
+- Input: json (comments optional)
+- Output: 
+
+## Environment
+- OS: Ubuntu (WSL)
+- Python: 3.12.12
+- Framework: PyTorch, Transformers
+
+--- ./project_dump2.txt ---
+
+--- ./src/config.py ---
+"""
+設定管理モジュール
+全ての設定値を一元管理
+"""
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class ModelConfig:
+    """モデルアーキテクチャの設定"""
+    coherence_model_name: str = "cl-tohoku/bert-base-japanese"
+    topic_model_name: str = "pkshatech/simcse-ja-bert-base-clcmlp"
+    margin: int = 1
+    train_split: int = 5
+    window_size: int = 5
+    
+    def __post_init__(self):
+        """設定値の検証"""
+        if self.margin <= 0:
+            raise ValueError("margin must be positive")
+        if self.window_size <= 0:
+            raise ValueError("window_size must be positive")
+
+
+@dataclass
+class TrainingConfig:
+    """学習の設定"""
+    batch_size: int = 12
+    learning_rate: float = 3e-5
+    epochs: int = 10
+    warmup_proportion: float = 0.1
+    seed: int = 3407
+    gradient_accumulation_steps: int = 1
+    max_grad_norm: float = 1.0
+    
+    # デバイス設定
+    no_cuda: bool = False
+    no_amp: bool = False
+    local_rank: int = -1
+    
+    # チェックポイント設定
+    resume: bool = False
+    checkpoint_path: Optional[str] = None
+    
+    def __post_init__(self):
+        """設定値の検証"""
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if self.learning_rate <= 0:
+            raise ValueError("learning_rate must be positive")
+        if not 0 <= self.warmup_proportion <= 1:
+            raise ValueError("warmup_proportion must be between 0 and 1")
+
+
+@dataclass
+class InferenceConfig:
+    """推論の設定"""
+    use_comments_for_topic: bool = True
+    fusion_method: str = "average"  # 'average' or 'linear'
+    device: str = "cuda"
+    
+    def __post_init__(self):
+        """設定値の検証"""
+        if self.fusion_method not in ["average", "linear"]:
+            raise ValueError("fusion_method must be 'average' or 'linear'")
+
+
+@dataclass
+class DataConfig:
+    """データの設定"""
+    data_path: str = ""
+    save_model_name: str = ""
+    root_dir: str = "."
+    
+    def __post_init__(self):
+        """設定値の検証"""
+        if not self.data_path:
+            raise ValueError("data_path is required")
+        if not self.save_model_name:
+            raise ValueError("save_model_name is required")
+
+
+@dataclass
+class EvaluationConfig:
+    """評価の設定"""
+    inference_data_path: str = ""
+    model_checkpoint: str = ""
+    save_path: str = "./results"
+    
+    # 境界検出方法
+    boundary_detection_methods: list = field(default_factory=lambda: [
+        'adaptive', 'fixed', 'threshold'
+    ])
+    
+    # ランダムベースライン
+    num_random_trials: int = 100
+    
+    def __post_init__(self):
+        """設定値の検証"""
+        if not self.inference_data_path:
+            raise ValueError("inference_data_path is required")
+        if not self.model_checkpoint:
+            raise ValueError("model_checkpoint is required")
+
+
+@dataclass
+class Config:
+    """全体の設定を統合"""
+    model: ModelConfig = field(default_factory=ModelConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+    inference: InferenceConfig = field(default_factory=InferenceConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    
+    @classmethod
+    def from_args(cls, args):
+        """argparseの引数から設定を作成"""
+        model_config = ModelConfig(
+            margin=getattr(args, 'margin', 1),
+            train_split=getattr(args, 'train_split', 5),
+            window_size=getattr(args, 'window_size', 5)
+        )
+        
+        training_config = TrainingConfig(
+            batch_size=getattr(args, 'batch_size', 12),
+            learning_rate=getattr(args, 'lr', 3e-5),
+            epochs=getattr(args, 'epochs', 10),
+            warmup_proportion=getattr(args, 'warmup_proportion', 0.1),
+            seed=getattr(args, 'seed', 3407),
+            gradient_accumulation_steps=getattr(args, 'accum', 1),
+            no_cuda=getattr(args, 'no_cuda', False),
+            no_amp=getattr(args, 'no_amp', False),
+            local_rank=getattr(args, 'local_rank', -1),
+            resume=getattr(args, 'resume', False),
+            checkpoint_path=getattr(args, 'ckpt', None)
+        )
+        
+        data_config = DataConfig(
+            data_path=getattr(args, 'data_path', ''),
+            save_model_name=getattr(args, 'save_model_name', ''),
+            root_dir=getattr(args, 'root', '.')
+        )
+        
+        return cls(
+            model=model_config,
+            training=training_config,
+            data=data_config
+        )
+--- ./src/data/__init__.py ---
+
+--- ./src/data/collator.py ---
+"""
+データコレータモジュール
+バッチ生成処理
+"""
+import torch
+from torch.nn.utils.rnn import pad_sequence
+from typing import List, Tuple, Any
+
+
+def get_attention_mask(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    テンソルからアテンションマスクを生成
+    
+    Args:
+        tensor: 入力テンソル
+        
+    Returns:
+        アテンションマスク
+    """
+    attention_masks = []
+    for sent in tensor:
+        att_mask = [int(token_id > 0) for token_id in sent]
+        attention_masks.append(att_mask)
+    return torch.tensor(attention_masks)
+
+
+class SegmentationDataCollator:
+    """
+    セグメンテーションタスク用のデータコレータ
+    バッチ生成とパディングを担当
+    """
+    
+    def __call__(self, examples: List[Tuple]) -> dict:
+        """
+        サンプルのリストからバッチを作成
+        
+        Args:
+            examples: サンプルのリスト
+            
+        Returns:
+            バッチデータの辞書
+        """
+        batch_size = len(examples)
+        
+        # --- Coherenceデータ ---
+        coheren_inputs = pad_sequence([ex[0] for ex in examples], batch_first=True)
+        coheren_mask = pad_sequence([ex[1] for ex in examples], batch_first=True)
+        coheren_type = pad_sequence([ex[2] for ex in examples], batch_first=True)
+        
+        # --- Topicデータ（コメントなし）---
+        topic_context = pad_sequence(
+            [torch.tensor(ex[3]) for ex in examples],
+            batch_first=True
+        )
+        topic_pos = pad_sequence(
+            [torch.tensor(ex[4]) for ex in examples],
+            batch_first=True
+        )
+        topic_neg = pad_sequence(
+            [torch.tensor(ex[5]) for ex in examples],
+            batch_first=True
+        )
+        
+        # 数値情報
+        topic_context_num = [ex[6] for ex in examples]
+        topic_pos_num = [ex[7] for ex in examples]
+        topic_neg_num = [ex[8] for ex in examples]
+        
+        # アテンションマスク生成
+        topic_context_mask = get_attention_mask(topic_context)
+        topic_pos_mask = get_attention_mask(topic_pos)
+        topic_neg_mask = get_attention_mask(topic_neg)
+        
+        # 学習用トピックデータ
+        topic_train = pad_sequence(
+            [torch.tensor(ids) for ex in examples for ids in ex[9]],
+            batch_first=True
+        )
+        topic_train_mask = pad_sequence(
+            [torch.ones(len(ids), dtype=torch.long) for ex in examples for ids in ex[9]],
+            batch_first=True
+        )
+        
+        topic_num = [ex[10] for ex in examples]
+        
+        return {
+            'coheren_inputs': coheren_inputs,
+            'coheren_mask': coheren_mask,
+            'coheren_type': coheren_type,
+            'topic_context': topic_context,
+            'topic_pos': topic_pos,
+            'topic_neg': topic_neg,
+            'topic_context_mask': topic_context_mask,
+            'topic_pos_mask': topic_pos_mask,
+            'topic_neg_mask': topic_neg_mask,
+            'topic_context_num': topic_context_num,
+            'topic_pos_num': topic_pos_num,
+            'topic_neg_num': topic_neg_num,
+            'topic_train': topic_train,
+            'topic_train_mask': topic_train_mask,
+            'topic_num': topic_num
+        }
+
+
+class SimpleDataCollator:
+    """
+    シンプルなデータコレータ
+    基本的なパディングのみ
+    """
+    
+    def __call__(self, examples: List[Any]) -> dict:
+        """
+        サンプルのリストからバッチを作成
+        
+        Args:
+            examples: サンプルのリスト
+            
+        Returns:
+            バッチデータの辞書
+        """
+        if isinstance(examples[0], dict):
+            # 辞書形式の場合
+            batch = {}
+            for key in examples[0].keys():
+                values = [ex[key] for ex in examples]
+                if isinstance(values[0], torch.Tensor):
+                    batch[key] = pad_sequence(values, batch_first=True)
+                else:
+                    batch[key] = values
+            return batch
+        else:
+            # タプル形式の場合
+            return SegmentationDataCollator()(examples)
+--- ./src/data/dataset.py ---
+"""
+データセットモジュール
+データセットクラスの定義
+"""
+import torch
+from torch.utils.data import Dataset
+from typing import List, Dict, Tuple
+import random
+from tqdm import tqdm
+
+
+class SegmentationDataset(Dataset):
+    """
+    セグメンテーション用データセット
+    """
+    
+    def __init__(self, samples: List[Tuple]):
+        """
+        Args:
+            samples: サンプルのリスト
+        """
+        self.samples = samples
+    
+    def __getitem__(self, idx: int) -> Tuple:
+        """
+        指定インデックスのサンプルを取得
+        
+        Args:
+            idx: インデックス
+            
+        Returns:
+            サンプル
+        """
+        return self.samples[idx]
+    
+    def __len__(self) -> int:
+        """データセットのサイズを返す"""
+        return len(self.samples)
+
+
+class MultiFileDataset(Dataset):
+    """
+    複数ファイルからデータを読み込むデータセット
+    """
+    
+    def __init__(self, data_paths: List[str]):
+        """
+        Args:
+            data_paths: データファイルのパスのリスト
+        """
+        self.data_paths = data_paths
+        self.loaded_data_list = []
+        self.all_samples = []
+        
+        # データファイルをロード
+        self._load_data_files()
+        
+        # サンプルを準備
+        self._prepare_samples()
+    
+    def _load_data_files(self):
+        """データファイルをロード"""
+        print(f"Loading {len(self.data_paths)} data files...")
+        
+        for path in tqdm(self.data_paths, desc="Loading data files"):
+            try:
+                loaded_data = torch.load(path, map_location="cpu")
+                self.loaded_data_list.append(loaded_data)
+            except Exception as e:
+                print(f"Error loading {path}: {e}")
+                continue
+        
+        print(f"Successfully loaded {len(self.loaded_data_list)} data files")
+    
+    def _prepare_samples(self):
+        """すべてのデータファイルからサンプルを準備"""
+        total_samples = 0
+        
+        for file_idx, loaded_data in enumerate(self.loaded_data_list):
+            # データ構造の検証
+            if 'sentences' not in loaded_data:
+                print(f"Warning: File {file_idx} missing 'sentences' key, skipping")
+                continue
+            
+            total_utterances = len(loaded_data["sentences"])
+            coherence_data_len = len(loaded_data["coheren_inputs"]) \
+                if "coheren_inputs" in loaded_data else total_utterances
+            
+            print(f"File {file_idx}: {total_utterances} utterances, "
+                  f"{coherence_data_len} coherence samples")
+            
+            # サンプル生成
+            for i in range(coherence_data_len):
+                sample = self._create_sample(loaded_data, i, total_utterances)
+                self.all_samples.append(sample)
+                total_samples += 1
+        
+        print(f"Total samples prepared: {total_samples}")
+    
+    def _create_sample(
+        self,
+        loaded_data: Dict,
+        idx: int,
+        total_utterances: int
+    ) -> Tuple:
+        """
+        1つのサンプルを作成
+        
+        Args:
+            loaded_data: ロードされたデータ
+            idx: インデックス
+            total_utterances: 総発話数
+            
+        Returns:
+            サンプル
+        """
+        current_utt = idx % total_utterances
+        
+        # Coherenceデータ
+        if "coheren_inputs" in loaded_data:
+            coheren_input = loaded_data["coheren_inputs"][idx]
+            coheren_mask = loaded_data["coheren_masks"][idx]
+            coheren_type = loaded_data["coheren_types"][idx]
+        else:
+            # フォールバック: ダミーデータ
+            coheren_input = torch.zeros(2, 512, dtype=torch.long)
+            coheren_mask = torch.zeros(2, 512, dtype=torch.long)
+            coheren_type = torch.zeros(2, 512, dtype=torch.long)
+        
+        # 正例・負例の選択
+        pos_idx = idx % total_utterances
+        neg_idx = random.randint(0, total_utterances - 1)
+        while neg_idx == pos_idx:
+            neg_idx = random.randint(0, total_utterances - 1)
+        
+        # SimCSE入力（コメントなし）
+        context_ids = loaded_data["sub_ids_simcse"][pos_idx]
+        pos_ids = loaded_data["sub_ids_simcse"][min(pos_idx + 1, total_utterances - 1)]
+        neg_ids = loaded_data["sub_ids_simcse"][neg_idx]
+        
+        sample = (
+            coheren_input,
+            coheren_mask,
+            coheren_type,
+            context_ids,
+            pos_ids,
+            neg_ids,
+            1,  # topic_context_num
+            1,  # topic_pos_num
+            1,  # topic_neg_num
+            loaded_data["sub_ids_simcse"],  # topic_train (全発話)
+            (total_utterances, current_utt)  # topic_num
+        )
+        
+        return sample
+    
+    def __getitem__(self, idx: int) -> Tuple:
+        """サンプルを取得"""
+        return self.all_samples[idx]
+    
+    def __len__(self) -> int:
+        """データセットのサイズを返す"""
+        return len(self.all_samples)
+
+
+class InferenceDataset(Dataset):
+    """
+    推論用データセット
+    """
+    
+    def __init__(self, data_path: str):
+        """
+        Args:
+            data_path: データファイルのパス
+        """
+        self.data = self._load_data(data_path)
+    
+    def _load_data(self, data_path: str) -> Dict:
+        """
+        データをロード
+        
+        Args:
+            data_path: データパス
+            
+        Returns:
+            ロードされたデータ
+        """
+        import json
+        
+        with open(data_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        return data
+    
+    def get_sentences(self) -> List[str]:
+        """発話のリストを取得"""
+        return self.data.get('sentences', [])
+    
+    def get_gold_boundaries(self) -> List[int]:
+        """正解境界のリストを取得"""
+        return self.data.get('boundary_labels', [])
+    
+    def get_comments(self) -> List[Dict]:
+        """コメントデータを取得"""
+        return self.data.get('comments', [])
+    
+    def __len__(self) -> int:
+        """データセットのサイズを返す"""
+        return len(self.get_sentences())
+    
+    def __getitem__(self, idx: int) -> str:
+        """指定インデックスの発話を取得"""
+        return self.get_sentences()[idx]
+--- ./src/data/loader.py ---
+"""
+データローダーモジュール
+データローダーの生成と管理
+"""
+import glob
+import os
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data.distributed import DistributedSampler
+from typing import List, Optional
+
+from data.dataset import MultiFileDataset, SegmentationDataset, InferenceDataset
+from data.collator import SegmentationDataCollator
+
+
+class DataLoaderFactory:
+    """
+    データローダーを生成するファクトリークラス
+    """
+    
+    @staticmethod
+    def create_train_dataloader(
+        data_path: str,
+        batch_size: int = 12,
+        local_rank: int = -1,
+        num_workers: int = 0
+    ) -> DataLoader:
+        """
+        学習用データローダーを作成
+        
+        Args:
+            data_path: データパスまたはパターン
+            batch_size: バッチサイズ
+            local_rank: 分散学習用のローカルランク
+            num_workers: ワーカー数
+            
+        Returns:
+            DataLoader
+        """
+        # データファイルのパスを取得
+        data_paths = DataLoaderFactory._get_data_paths(data_path)
+        
+        # データセットを作成
+        dataset = MultiFileDataset(data_paths)
+        
+        # サンプラーを作成
+        if local_rank == -1:
+            sampler = RandomSampler(dataset)
+        else:
+            sampler = DistributedSampler(dataset)
+        
+        # コレータを作成
+        collator = SegmentationDataCollator()
+        
+        # データローダーを作成
+        dataloader = DataLoader(
+            dataset,
+            sampler=sampler,
+            batch_size=batch_size,
+            collate_fn=collator,
+            num_workers=num_workers,
+            pin_memory=True
+        )
+        
+        return dataloader
+    
+    @staticmethod
+    def create_eval_dataloader(
+        data_path: str,
+        batch_size: int = 1,
+        num_workers: int = 0
+    ) -> DataLoader:
+        """
+        評価用データローダーを作成
+        
+        Args:
+            data_path: データパス
+            batch_size: バッチサイズ
+            num_workers: ワーカー数
+            
+        Returns:
+            DataLoader
+        """
+        # データセットを作成
+        dataset = InferenceDataset(data_path)
+        
+        # サンプラーを作成（順次サンプリング）
+        sampler = SequentialSampler(dataset)
+        
+        # データローダーを作成
+        dataloader = DataLoader(
+            dataset,
+            sampler=sampler,
+            batch_size=batch_size,
+            num_workers=num_workers
+        )
+        
+        return dataloader
+    
+    @staticmethod
+    def _get_data_paths(data_path: str) -> List[str]:
+        """
+        データファイルのパスリストを取得
+        
+        Args:
+            data_path: データパスまたはパターン
+            
+        Returns:
+            ファイルパスのリスト
+        """
+        # ディレクトリの場合
+        if os.path.isdir(data_path):
+            data_paths = glob.glob(os.path.join(data_path, "*.pt"))
+            if not data_paths:
+                raise ValueError(f"No .pt files found in directory: {data_path}")
+        
+        # パターンの場合
+        else:
+            data_paths = glob.glob(data_path)
+            if not data_paths:
+                raise ValueError(f"No files match pattern: {data_path}")
+        
+        print(f"Found {len(data_paths)} data files")
+        
+        return data_paths
+
+
+def get_train_dataloader(
+    data_path: str,
+    batch_size: int = 12,
+    local_rank: int = -1
+) -> DataLoader:
+    """
+    学習用データローダーを取得（簡易版）
+    
+    Args:
+        data_path: データパス
+        batch_size: バッチサイズ
+        local_rank: ローカルランク
+        
+    Returns:
+        DataLoader
+    """
+    return DataLoaderFactory.create_train_dataloader(
+        data_path=data_path,
+        batch_size=batch_size,
+        local_rank=local_rank
+    )
+
+
+def get_eval_dataloader(data_path: str) -> DataLoader:
+    """
+    評価用データローダーを取得（簡易版）
+    
+    Args:
+        data_path: データパス
+        
+    Returns:
+        DataLoader
+    """
+    return DataLoaderFactory.create_eval_dataloader(data_path=data_path)
+--- ./src/data_creaters/簡易化版/common_transcript_processing.py ---
+import os
+import csv
+import re
+from typing import List, Dict, Tuple
+from tqdm import tqdm
+import unicodedata
+from youtube_transcript_api import YouTubeTranscriptApi
+from pytube import YouTube
+import MeCab
+
+
+def seconds_to_hms(seconds: float) -> str:
+    """
+    秒数を時:分:秒形式に変換
+    """
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def hms_to_seconds(hms: str) -> float:
+    """
+    時:分:秒形式を秒数に変換
+    """
+    parts = hms.split(':')
+    if len(parts) == 3:
+        h, m, s = map(float, parts)
+        return h * 3600 + m * 60 + s
+    elif len(parts) == 2:
+        m, s = map(float, parts)
+        return m * 60 + s
+    elif len(parts) == 1:
+        return float(parts[0])
+    else:
+        return 0.0
+
+
+def normalize_text(text: str) -> str:
+    """テキストを正規化"""
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def get_raw_transcript(video_url: str, language: str = "ja") -> Tuple[List[str], List[Dict]]:
+    """
+    YouTubeから受け取ったままの未加工の字幕データを取得
+    """
+    print(f"未加工の字幕データを取得中: {video_url}")
+    
+    # 動画IDを取得
+    yt = YouTube(video_url)
+    video_id = yt.video_id
+    
+    # YouTubeTranscriptApiから生データを取得
+    api = YouTubeTranscriptApi()
+    transcript_list = api.list(video_id)
+    
+    # 指定言語の字幕を探す
+    transcript_obj = next((t for t in transcript_list if t.language_code == language), None)
+    if not transcript_obj:
+        print(f"警告: {language}字幕が見つかりません。他の言語を検索します")
+        transcript_obj = transcript_list[0]  # 最初の字幕を使用
+    
+    # 生データを取得
+    transcript = transcript_obj.fetch().to_raw_data()
+    
+    raw_chunks = []
+    raw_metadata = []
+    
+    for entry in transcript:
+        # テキストは完全に未加工の状態で保存（音楽タグなども含む）
+        text = entry['text'].replace("\n", " ").strip()
+        raw_chunks.append(text)
+        
+        # メタデータ
+        raw_metadata.append({
+            'start': entry['start'],
+            'duration': entry['duration'],
+            'end': entry['start'] + entry['duration']
+        })
+    
+    print(f"未加工字幕取得完了: {len(raw_chunks)} チャンク")
+    return raw_chunks, raw_metadata
+
+
+def basic_transcript_processing(
+    raw_chunks: List[str], 
+    raw_metadata: List[Dict],
+    min_len: int = 6,
+    max_len: int = 60,
+    debug_mode: bool = False
+) -> Tuple[List[str], List[Dict]]:
+    """
+    基本的な字幕処理（両ファイルで共通）：
+    1. 特殊タグの除去
+    2. 文頭句読点除去
+    3. 短文結合（min_len未満を前の文に結合）
+    4. 長文分割（max_len以上を分割）
+    """
+    print("基本的な字幕処理を開始します...")
+    
+    # 1. 特殊タグの除去と正規化
+    print("1. 特殊タグ除去と正規化...")
+    processed_chunks = []
+    processed_metadata = []
+    
+    with tqdm(total=len(raw_chunks), desc="タグ除去") as pbar:
+        for chunk, meta in zip(raw_chunks, raw_metadata):
+            if not chunk.strip():
+                pbar.update(1)
+                continue
+                
+            # 特殊タグを除去
+            text = re.sub(r'\[音楽\]', '', chunk)
+            text = re.sub(r'\[拍手\]', '', text)
+            text = re.sub(r'\[.*?\]', '', text)  # すべての[]タグを除去
+            
+            # 空白を正規化
+            text = re.sub(r'\s+', ' ', text).strip()
+            
+            if text:  # 空でない場合のみ追加
+                processed_chunks.append(text)
+                processed_metadata.append(meta)
+            
+            pbar.update(1)
+    
+    print(f"  タグ除去後: {len(processed_chunks)} チャンク")
+    
+    # 2. 文頭句読点除去
+    print("2. 文頭句読点除去...")
+    cleaned_chunks = []
+    cleaned_metadata = []
+    
+    with tqdm(total=len(processed_chunks), desc="句読点除去") as pbar:
+        for chunk, meta in zip(processed_chunks, processed_metadata):
+            # 文頭の句読点を除去
+            cleaned_chunk = re.sub(r'^[。．.！!？?、,]+', '', chunk)
+            if cleaned_chunk.strip():
+                cleaned_chunks.append(cleaned_chunk)
+                cleaned_metadata.append(meta)
+            pbar.update(1)
+    
+    print(f"  句読点除去後: {len(cleaned_chunks)} チャンク")
+    
+    # 3. 短文の結合処理
+    print(f"3. 短文結合処理（{min_len}文字未満を結合）...")
+    combined_sentences = []
+    combined_metadata = []
+    
+    with tqdm(total=len(cleaned_chunks), desc="短文結合") as pbar:
+        for i, (chunk, meta) in enumerate(zip(cleaned_chunks, cleaned_metadata)):
+            if i == 0:
+                # 最初のチャンクはそのまま追加
+                combined_sentences.append(chunk)
+                combined_metadata.append({
+                    'start': meta['start'],
+                    'end': meta['end'],
+                    'original_start': meta['start'],
+                    'original_end': meta['end']
+                })
+            else:
+                # 短文（min_len未満）の場合、前の文に結合
+                if len(chunk) < min_len and combined_sentences:
+                    # 前の文に結合
+                    combined_sentences[-1] += chunk
+                    
+                    # メタデータを更新（終了時間を延長）
+                    combined_metadata[-1]['end'] = meta['end']
+                    combined_metadata[-1]['original_end'] = meta['end']
+                    
+                    if debug_mode and i < 10:  # デバッグ用
+                        print(f"  短文結合: 文{i}『{chunk}』({len(chunk)}文字) → 前の文に結合")
+                else:
+                    # 通常の文はそのまま追加
+                    combined_sentences.append(chunk)
+                    combined_metadata.append({
+                        'start': meta['start'],
+                        'end': meta['end'],
+                        'original_start': meta['start'],
+                        'original_end': meta['end']
+                    })
+            pbar.update(1)
+    
+    print(f"  結合後文数: {len(combined_sentences)}（結合前: {len(cleaned_chunks)}）")
+    
+    # 4. 長文分割処理（オプション）
+    print(f"4. 長文分割処理（{max_len}文字以上を分割）...")
+    final_sentences = []
+    final_metadata = []
+    
+    with tqdm(total=len(combined_sentences), desc="長文分割") as pbar:
+        for text, meta in zip(combined_sentences, combined_metadata):
+            chunk_start = meta['start']
+            chunk_duration = meta['end'] - meta['start']
+            
+            # max_lenを超える場合のみ分割
+            if len(text) > max_len:
+                # 可能な限り意味の切れ目で分割
+                parts = []
+                current_pos = 0
+                
+                while current_pos < len(text):
+                    # 次の分割点を探す（句読点や自然な切れ目）
+                    next_split = current_pos + max_len
+                    
+                    # 可能なら句読点で分割
+                    if next_split < len(text):
+                        # 句読点を探す
+                        punct_positions = []
+                        for punct in ['。', '.', '！', '!', '？', '?', '、', ',']:
+                            pos = text.find(punct, current_pos + int(max_len * 0.5), min(next_split + 10, len(text)))
+                            if pos != -1:
+                                punct_positions.append(pos)
+                        
+                        if punct_positions:
+                            next_split = min(punct_positions) + 1  # 句読点を含める
+                    
+                    part = text[current_pos:next_split]
+                    
+                    # 文頭の句読点を除去
+                    part = re.sub(r'^[。．.！!？?、,]+', '', part.strip())
+                    if part:
+                        # 時間按分計算
+                        part_ratio_start = current_pos / len(text)
+                        part_ratio_end = next_split / len(text)
+                        
+                        part_start_time = chunk_start + (chunk_duration * part_ratio_start)
+                        part_end_time = chunk_start + (chunk_duration * part_ratio_end)
+                        
+                        final_sentences.append(part)
+                        final_metadata.append({
+                            'start': part_start_time,
+                            'end': part_end_time,
+                            'original_start': meta['original_start'],
+                            'original_end': meta['original_end']
+                        })
+                    
+                    current_pos = next_split
+            else:
+                # 分割しない
+                final_sentences.append(text)
+                final_metadata.append(meta)
+            
+            pbar.update(1)
+    
+    # 5. 最終的な短文結合（分割後も短い文を結合）
+    print("5. 最終短文結合処理...")
+    very_final_sentences = []
+    very_final_metadata = []
+    
+    for i, (text, meta) in enumerate(zip(final_sentences, final_metadata)):
+        if i == 0:
+            very_final_sentences.append(text)
+            very_final_metadata.append(meta)
+        else:
+            if len(text) < min_len and very_final_sentences:
+                very_final_sentences[-1] += text
+                very_final_metadata[-1]['end'] = meta['end']
+            else:
+                very_final_sentences.append(text)
+                very_final_metadata.append(meta)
+    
+    print(f"  最終文数: {len(very_final_sentences)}")
+    
+    # 統計情報
+    combined_count = len(cleaned_chunks) - len(combined_sentences)
+    split_count = len(final_sentences) - len(combined_sentences)
+    
+    if combined_count > 0:
+        print(f"  結合された短文数: {combined_count}")
+    if split_count > 0:
+        print(f"  分割された長文数: {split_count}")
+    
+    # デバッグ情報
+    if debug_mode:
+        print("\n最初の5文:")
+        for i, (sentence, meta) in enumerate(zip(very_final_sentences[:5], very_final_metadata[:5])):
+            start_hms = seconds_to_hms(meta['start'])
+            end_hms = seconds_to_hms(meta['end'])
+            display_text = f"{sentence[:50]}..." if len(sentence) > 50 else sentence
+            print(f"  {i+1}. [{start_hms} - {end_hms}] {display_text}")
+        
+        # 文字数分布
+        lengths = [len(s) for s in very_final_sentences]
+        if lengths:
+            print(f"\n文字数分布:")
+            print(f"  平均: {sum(lengths)/len(lengths):.1f}文字")
+            print(f"  最小: {min(lengths)}文字")
+            print(f"  最大: {max(lengths)}文字")
+            print(f"  {min_len}文字未満: {sum(1 for l in lengths if l < min_len)}文")
+            print(f"  {max_len}文字以上: {sum(1 for l in lengths if l > max_len)}文")
+    
+    return very_final_sentences, very_final_metadata
+
+
+def save_transcript_to_csv(
+    sentences: List[str],
+    metadata: List[Dict],
+    csv_path: str,
+    title: str = "字幕テキスト"
+):
+    """
+    字幕データをCSVに保存
+    """
+    print(f"字幕をCSVに保存: {csv_path}")
+    
+    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['文番号', '開始時間', '終了時間', '開始時間(秒)', '終了時間(秒)', title])
+        
+        with tqdm(total=len(sentences), desc="CSV保存") as pbar:
+            for i, (sentence, meta) in enumerate(zip(sentences, metadata)):
+                start_seconds = meta['start']
+                end_seconds = meta['end']
+                
+                start_hms = seconds_to_hms(start_seconds)
+                end_hms = seconds_to_hms(end_seconds)
+                
+                writer.writerow([
+                    i + 1,
+                    start_hms,
+                    end_hms,
+                    f"{start_seconds:.2f}",
+                    f"{end_seconds:.2f}",
+                    sentence
+                ])
+                pbar.update(1)
+    
+    print(f"CSV保存完了: {csv_path}")
+--- ./src/data_creaters/簡易化版/create_inference_data.py ---
+import os
+import csv
+import json
+import re
+import torch
+from typing import List, Dict, Tuple
+from tqdm import tqdm
+from test_window import (
+    get_comments, 
+    build_comment_vectors,
+    generate_coherence_data,
+    simcse_tokenizer,
+    AutoTokenizer,
+    YouTube,  # pytubeからYouTubeをインポート
+    YouTubeTranscriptApi  # YouTubeTranscriptApiをインポート
+)
+
+def seconds_to_hms(seconds: float) -> str:
+    """
+    秒数を時:分:秒形式に変換
+    """
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+def hms_to_seconds(hms: str) -> float:
+    """
+    時:分:秒形式を秒数に変換
+    """
+    parts = hms.split(':')
+    if len(parts) == 3:
+        h, m, s = map(float, parts)
+        return h * 3600 + m * 60 + s
+    elif len(parts) == 2:
+        m, s = map(float, parts)
+        return m * 60 + s
+    elif len(parts) == 1:
+        return float(parts[0])
+    else:
+        return 0.0
+
+def get_raw_transcript(video_url: str) -> Tuple[List[str], List[Dict]]:
+    """
+    YouTubeから受け取ったままの未加工の字幕データを取得
+    """
+    print(f"未加工の字幕データを取得中: {video_url}")
+    
+    # 動画IDを取得
+    yt = YouTube(video_url)
+    video_id = yt.video_id
+    
+    # YouTubeTranscriptApiから生データを取得
+    api = YouTubeTranscriptApi()
+    transcript_list = api.list(video_id)
+    
+    # 日本語字幕を探す
+    transcript_obj = next((t for t in transcript_list if t.language_code == "ja"), None)
+    if not transcript_obj:
+        print(f"警告: 日本語字幕が見つかりません。他の言語を検索します")
+        transcript_obj = transcript_list[0]  # 最初の字幕を使用
+    
+    # 生データを取得
+    transcript = transcript_obj.fetch().to_raw_data()
+    
+    raw_chunks = []
+    raw_metadata = []
+    
+    for entry in transcript:
+        # テキストは完全に未加工の状態で保存（音楽タグなども含む）
+        text = entry['text'].replace("\n", " ").strip()
+        raw_chunks.append(text)
+        
+        # メタデータ
+        raw_metadata.append({
+            'start': entry['start'],
+            'duration': entry['duration'],
+            'end': entry['start'] + entry['duration']
+        })
+    
+    print(f"未加工字幕取得完了: {len(raw_chunks)} チャンク")
+    return raw_chunks, raw_metadata
+
+def simple_transcript_processing(video_url: str, min_len: int = 6, debug_mode: bool = False) -> Tuple[List[str], List[Dict], List[str], List[Dict]]:
+    """
+    シンプルな3段階の字幕処理：
+    1. 生チャンク取得（タグ除去・正規化）
+    2. 文頭句読点除去
+    3. 短文結合（min_len未満を前の文に結合）
+    """
+    print("シンプルな字幕処理を開始します...")
+    
+    # 1. 生チャンクの取得
+    print("1. 生チャンクの取得...")
+    raw_chunks, raw_metadata = get_raw_transcript(video_url)
+    
+    if not raw_chunks:
+        raise ValueError("字幕データが取得できませんでした")
+    
+    print(f"  取得した生チャンク数: {len(raw_chunks)}")
+    
+    # 1.5. 特殊タグの除去と正規化（生チャンク取得時に実行）
+    print("1.5. 特殊タグ除去と正規化...")
+    processed_chunks = []
+    processed_metadata = []
+    
+    for chunk, meta in zip(raw_chunks, raw_metadata):
+        if not chunk.strip():
+            continue
+            
+        # 特殊タグを除去
+        text = re.sub(r'\[音楽\]', '', chunk)
+        text = re.sub(r'\[拍手\]', '', text)
+        text = re.sub(r'\[.*?\]', '', text)  # すべての[]タグを除去
+        
+        # 空白を正規化
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        if text:  # 空でない場合のみ追加
+            processed_chunks.append(text)
+            processed_metadata.append(meta)
+    
+    print(f"  タグ除去後: {len(processed_chunks)} チャンク")
+    
+    # 2. 句読点分割のスキップ（文頭句読点のみ除去）
+    print("2. 文頭句読点除去...")
+    cleaned_chunks = []
+    cleaned_metadata = []
+    
+    for chunk, meta in zip(processed_chunks, processed_metadata):
+        # 文頭の句読点を除去
+        cleaned_chunk = re.sub(r'^[。．.！!？?、,]+', '', chunk)
+        if cleaned_chunk.strip():
+            cleaned_chunks.append(cleaned_chunk)
+            cleaned_metadata.append(meta)
+    
+    print(f"  句読点除去後: {len(cleaned_chunks)} チャンク")
+    
+    # 3. 短文の結合処理
+    print(f"3. 短文結合処理（{min_len}文字未満を結合）...")
+    final_sentences = []
+    final_metadata = []
+    
+    for i, (chunk, meta) in enumerate(zip(cleaned_chunks, cleaned_metadata)):
+        if i == 0:
+            # 最初のチャンクはそのまま追加
+            final_sentences.append(chunk)
+            final_metadata.append({
+                'start': meta['start'],
+                'end': meta['end'],
+                'original_start': meta['start'],
+                'original_end': meta['end']
+            })
+        else:
+            # 短文（min_len未満）の場合、前の文に結合
+            if len(chunk) < min_len and final_sentences:
+                # 前の文に結合
+                final_sentences[-1] += chunk
+                
+                # メタデータを更新（終了時間を延長）
+                final_metadata[-1]['end'] = meta['end']
+                final_metadata[-1]['original_end'] = meta['end']
+                
+                if debug_mode and i < 10:  # デバッグ用
+                    print(f"  短文結合: 文{i}『{chunk}』({len(chunk)}文字) → 前の文に結合")
+            else:
+                # 通常の文はそのまま追加
+                final_sentences.append(chunk)
+                final_metadata.append({
+                    'start': meta['start'],
+                    'end': meta['end'],
+                    'original_start': meta['start'],
+                    'original_end': meta['end']
+                })
+    
+    print(f"  最終文数: {len(final_sentences)}（結合前: {len(cleaned_chunks)}）")
+    
+    # 結合された文の統計を表示
+    combined_count = len(cleaned_chunks) - len(final_sentences)
+    if combined_count > 0:
+        print(f"  結合された短文数: {combined_count}")
+    
+    # 最初の5文を表示（デバッグ用）
+    print("\n最初の5文:")
+    for i, (sentence, meta) in enumerate(zip(final_sentences[:5], final_metadata[:5])):
+        start_hms = seconds_to_hms(meta['start'])
+        end_hms = seconds_to_hms(meta['end'])
+        display_text = f"{sentence[:50]}..." if len(sentence) > 50 else sentence
+        print(f"  {i+1}. [{start_hms} - {end_hms}] {display_text}")
+    
+    # 文字数分布を表示
+    lengths = [len(s) for s in final_sentences]
+    if lengths:
+        print(f"\n文字数分布:")
+        print(f"  平均: {sum(lengths)/len(lengths):.1f}文字")
+        print(f"  最小: {min(lengths)}文字")
+        print(f"  最大: {max(lengths)}文字")
+        print(f"  {min_len}文字未満の文: {sum(1 for l in lengths if l < min_len)}")
+    
+    return final_sentences, final_metadata, raw_chunks, raw_metadata
+
+def save_raw_transcript_to_csv(raw_chunks: List[str], raw_metadata: List[Dict], 
+                               video_index: int, output_dir: str = "./raw_data"):
+    """
+    未加工の字幕データをCSVに保存
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    csv_path = f"{output_dir}/video_{video_index}_raw_transcript.csv"
+    
+    print(f"未加工字幕をCSVに保存: {csv_path}")
+    
+    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
+        writer = csv.writer(csvfile)
+        
+        # ヘッダー書き込み
+        writer.writerow([
+            'チャンク番号', 
+            '開始時間(時:分:秒)', 
+            '終了時間(時:分:秒)',
+            '開始時間(秒)', 
+            '終了時間(秒)', 
+            '期間(秒)',
+            '未加工字幕テキスト',
+            'メモ'
+        ])
+        
+        # データを書き込み
+        with tqdm(total=len(raw_chunks), desc="未加工データ保存") as pbar:
+            for i, (chunk, meta) in enumerate(zip(raw_chunks, raw_metadata)):
+                start_seconds = meta['start']
+                end_seconds = meta['end']
+                duration = meta['duration']
+                
+                # 秒を時:分:秒形式に変換
+                start_hms = seconds_to_hms(start_seconds)
+                end_hms = seconds_to_hms(end_seconds)
+                
+                # 特殊タグの有無をメモ欄に記録
+                memo = ""
+                if '[' in chunk and ']' in chunk:
+                    memo = "音楽/効果音タグを含む"
+                elif len(chunk) < 3:
+                    memo = "短いチャンク"
+                
+                writer.writerow([
+                    i + 1,
+                    start_hms,
+                    end_hms,
+                    f"{start_seconds:.3f}",
+                    f"{end_seconds:.3f}",
+                    f"{duration:.3f}",
+                    chunk,
+                    memo
+                ])
+                pbar.update(1)
+    
+    print(f"未加工字幕CSV保存完了: {csv_path}")
+    
+    # 統計情報を表示
+    total_chars = sum(len(chunk) for chunk in raw_chunks)
+    avg_chars = total_chars / len(raw_chunks) if raw_chunks else 0
+    
+    print(f"統計情報:")
+    print(f"  - 総チャンク数: {len(raw_chunks)}")
+    print(f"  - 総文字数: {total_chars}")
+    print(f"  - 平均文字数/チャンク: {avg_chars:.1f}")
+    if raw_metadata:
+        print(f"  - 時間範囲: {seconds_to_hms(raw_metadata[0]['start'])} ~ {seconds_to_hms(raw_metadata[-1]['end'])}")
+    
+    return csv_path
+
+def parse_topic_timetable(timetable_text: str) -> List[Dict]:
+    """
+    時間ウィンドウ形式（開始時間 終了時間 トピック）のタイムテーブルを解析
+    
+    例：
+    0:05:07 0:09:33 AI
+    0:16:22 0:18:16 障害福祉の仕事
+    0:18:16 0:22:42 高市総理
+    """
+    time_windows = []
+    lines = timetable_text.strip().split('\n')
+    
+    print(f"時間ウィンドウ形式のタイムテーブルを解析中...")
+    
+    for line_num, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+            
+        # コメント行をスキップ
+        if line.startswith('#'):
+            continue
+        
+        # 時間ウィンドウ形式を解析（開始時間 終了時間 トピック）
+        # 例：0:05:07 0:09:33 AI
+        pattern = r'(\d+:\d+(?::\d+)?|\d+)\s+(\d+:\d+(?::\d+)?|\d+)\s+(.+)'
+        match = re.match(pattern, line)
+        
+        if match:
+            start_time_str = match.group(1)
+            end_time_str = match.group(2)
+            topic = match.group(3).strip()
+            
+            # 時間を秒に変換
+            start_seconds = hms_to_seconds(start_time_str)
+            end_seconds = hms_to_seconds(end_time_str)
+            
+            # 終了時間が開始時間より前の場合は警告
+            if end_seconds <= start_seconds:
+                print(f"警告（行{line_num}）: 終了時間が開始時間より前です: {start_time_str} - {end_time_str}")
+                continue
+            
+            # ウィンドウを追加
+            time_windows.append({
+                'start_seconds': start_seconds,
+                'end_seconds': end_seconds,
+                'start_display': start_time_str,
+                'end_display': end_time_str,
+                'topic': topic,
+                'duration': end_seconds - start_seconds
+            })
+            
+            print(f"  ウィンドウ{len(time_windows)}: {start_time_str} - {end_time_str} ({topic})")
+        else:
+            print(f"警告（行{line_num}）: 解析できない行: {line}")
+    
+    # 開始時間でソート
+    time_windows = sorted(time_windows, key=lambda x: x['start_seconds'])
+    
+    # ウィンドウの重複チェック
+    for i in range(1, len(time_windows)):
+        prev = time_windows[i-1]
+        curr = time_windows[i]
+        
+        if curr['start_seconds'] < prev['end_seconds']:
+            print(f"警告: ウィンドウ{i}とウィンドウ{i+1}が重複しています:")
+            print(f"  {prev['start_display']}-{prev['end_display']} ({prev['topic']})")
+            print(f"  {curr['start_display']}-{curr['end_display']} ({curr['topic']})")
+    
+    print(f"解析された時間ウィンドウ: {len(time_windows)} 件")
+    return time_windows
+
+def filter_by_time_windows(sentences: List[str], sentence_metadata: List[Dict], 
+                          comments: List[Dict], time_windows: List[Dict]) -> Tuple[List[str], List[Dict], List[Dict]]:
+    """
+    時間ウィンドウに基づいて字幕とコメントをフィルタリング
+    
+    Args:
+        sentences: 字幕文のリスト
+        sentence_metadata: 字幕メタデータのリスト
+        comments: コメントのリスト
+        time_windows: 時間ウィンドウのリスト
+    
+    Returns:
+        フィルタリング後の字幕、メタデータ、コメント
+    """
+    if not time_windows:
+        print("時間ウィンドウが指定されていないため、全データを保持します")
+        return sentences, sentence_metadata, comments
+    
+    print(f"時間ウィンドウによるフィルタリング開始: {len(time_windows)} ウィンドウ")
+    
+    # 字幕のフィルタリング
+    filtered_sentences = []
+    filtered_metadata = []
+    sentence_window_indices = []  # 各文が属するウィンドウのインデックス
+    
+    for i, (sentence, metadata) in enumerate(zip(sentences, sentence_metadata)):
+        sentence_start = metadata['start']
+        sentence_end = metadata['end']
+        
+        # どのウィンドウに含まれるかをチェック
+        in_any_window = False
+        window_idx = -1
+        
+        for idx, window in enumerate(time_windows):
+            # 文の開始時間がウィンドウ内にあるかチェック
+            # または文がウィンドウと部分的に重なっているかチェック
+            if window['start_seconds'] <= sentence_start < window['end_seconds']:
+                in_any_window = True
+                window_idx = idx
+                break
+        
+        if in_any_window:
+            filtered_sentences.append(sentence)
+            filtered_metadata.append(metadata)
+            sentence_window_indices.append(window_idx)
+    
+    print(f"字幕フィルタリング結果: {len(sentences)} -> {len(filtered_sentences)} 文")
+    
+    # 各ウィンドウごとの文の数をカウント
+    window_counts = {}
+    for idx in sentence_window_indices:
+        window_counts[idx] = window_counts.get(idx, 0) + 1
+    
+    for idx, count in window_counts.items():
+        if idx < len(time_windows):
+            window_info = time_windows[idx]
+            print(f"  ウィンドウ{idx+1} ({window_info['start_display']}-{window_info['end_display']}): {count} 文")
+    
+    # コメントのフィルタリング
+    filtered_comments = []
+    if comments:
+        for comment in comments:
+            # コメントの時間を秒数に変換
+            comment_time = timestamp_to_seconds(comment['time'])
+            
+            # どのウィンドウに含まれるかをチェック
+            in_any_window = False
+            for window in time_windows:
+                if window['start_seconds'] <= comment_time < window['end_seconds']:
+                    in_any_window = True
+                    break
+            
+            if in_any_window:
+                filtered_comments.append(comment)
+        
+        print(f"コメントフィルタリング結果: {len(comments)} -> {len(filtered_comments)} 件")
+    else:
+        filtered_comments = []
+    
+    return filtered_sentences, filtered_metadata, filtered_comments
+
+def validate_time_alignment(sentences: List[str], sentence_metadata: List[Dict], time_windows: List[Dict], video_index: int):
+    """
+    字幕修正後の時間と時間ウィンドウの対応を検証
+    """
+    print(f"\n=== 動画 {video_index+1} タイムアライメント検証 ===")
+    
+    if not time_windows or not sentences:
+        print("検証対象データが不足しています")
+        return
+    
+    # 字幕の最初と最後の時間
+    first_sentence_time = sentence_metadata[0]['start'] if sentence_metadata else 0
+    last_sentence_time = sentence_metadata[-1]['end'] if sentence_metadata else 0
+    
+    print(f"時間ウィンドウ情報:")
+    for i, window in enumerate(time_windows):
+        print(f"  ウィンドウ{i+1}: {window['start_display']} - {window['end_display']} ({window['topic']})")
+    
+    print(f"\n修正後字幕:")
+    print(f"  最初の文: {first_sentence_time:.1f}秒 - 『{sentences[0][:50]}...』" 
+          if sentences else "文なし")
+    print(f"  最後の文: {last_sentence_time:.1f}秒 - 『{sentences[-1][:50]}...』" 
+          if sentences else "文なし")
+    
+    # 各ウィンドウ内の文の数をカウント
+    print(f"\n各ウィンドウ内の文の分布:")
+    for i, window in enumerate(time_windows):
+        window_start = window['start_seconds']
+        window_end = window['end_seconds']
+        
+        # ウィンドウ内の文をカウント
+        count_in_window = 0
+        for meta in sentence_metadata:
+            sentence_start = meta['start']
+            if window_start <= sentence_start < window_end:
+                count_in_window += 1
+        
+        print(f"  ウィンドウ{i+1} ({window['topic']}): {count_in_window} 文")
+        
+        # 最初の文と最後の文を表示
+        if count_in_window > 0:
+            first_in_window = next((s for s, m in zip(sentences, sentence_metadata) 
+                                  if window_start <= m['start'] < window_end), None)
+            last_in_window = next((s for s, m in reversed(list(zip(sentences, sentence_metadata))) 
+                                 if window_start <= m['start'] < window_end), None)
+            
+            if first_in_window:
+                print(f"    最初の文: 『{first_in_window[:60]}...』")
+            if last_in_window:
+                print(f"    最後の文: 『{last_in_window[:60]}...』")
+
+def adjust_timetable_for_processed_transcript(time_windows: List[Dict], sentence_metadata: List[Dict]) -> List[Dict]:
+    """
+    修正処理後の字幕に合わせて時間ウィンドウを調整
+    
+    考え方:
+    1. 各時間ウィンドウの開始・終了時間を、修正後字幕の文開始時間に最も近いものに調整
+    2. 元の時間も保持して記録
+    """
+    print("時間ウィンドウの調整を開始...")
+    
+    if not time_windows or not sentence_metadata:
+        print("調整対象データが不足しています")
+        return time_windows
+    
+    adjusted_windows = []
+    adjustment_stats = {
+        'start_adjusted': 0,
+        'end_adjusted': 0,
+        'total_difference': 0.0
+    }
+    
+    for window_idx, window in enumerate(time_windows):
+        original_start = window['start_seconds']
+        original_end = window['end_seconds']
+        
+        # 開始時間の調整
+        closest_start_time = None
+        closest_start_idx = None
+        min_start_diff = float('inf')
+        
+        # 終了時間の調整
+        closest_end_time = None
+        closest_end_idx = None
+        min_end_diff = float('inf')
+        
+        for idx, meta in enumerate(sentence_metadata):
+            sentence_time = meta['start']
+            
+            # 開始時間に最も近い文を探す
+            start_diff = abs(sentence_time - original_start)
+            if start_diff < min_start_diff:
+                min_start_diff = start_diff
+                closest_start_time = sentence_time
+                closest_start_idx = idx
+            
+            # 終了時間に最も近い文を探す
+            end_diff = abs(sentence_time - original_end)
+            if end_diff < min_end_diff:
+                min_end_diff = end_diff
+                closest_end_time = sentence_time
+                closest_end_idx = idx
+        
+        # 調整後のウィンドウを作成
+        adjusted_window = {
+            **window,
+            'original_start_seconds': original_start,
+            'original_end_seconds': original_end,
+            'start_adjusted': False,
+            'end_adjusted': False,
+            'start_adjustment_diff': min_start_diff,
+            'end_adjustment_diff': min_end_diff
+        }
+        
+        # 開始時間の調整（10秒以内の差なら調整）
+        if closest_start_time is not None and min_start_diff < 10:
+            adjusted_window['start_seconds'] = closest_start_time
+            adjusted_window['start_display'] = seconds_to_hms(closest_start_time)
+            adjusted_window['start_adjusted'] = True
+            adjusted_window['closest_start_idx'] = closest_start_idx
+            adjustment_stats['start_adjusted'] += 1
+            adjustment_stats['total_difference'] += min_start_diff
+        
+        # 終了時間の調整（10秒以内の差なら調整）
+        if closest_end_time is not None and min_end_diff < 10:
+            adjusted_window['end_seconds'] = closest_end_time
+            adjusted_window['end_display'] = seconds_to_hms(closest_end_time)
+            adjusted_window['end_adjusted'] = True
+            adjusted_window['closest_end_idx'] = closest_end_idx
+            adjustment_stats['end_adjusted'] += 1
+            adjustment_stats['total_difference'] += min_end_diff
+        
+        adjusted_windows.append(adjusted_window)
+    
+    # 統計情報を表示
+    print(f"時間ウィンドウ調整完了:")
+    print(f"  開始時間調整: {adjustment_stats['start_adjusted']}件")
+    print(f"  終了時間調整: {adjustment_stats['end_adjusted']}件")
+    if adjustment_stats['start_adjusted'] + adjustment_stats['end_adjusted'] > 0:
+        avg_diff = adjustment_stats['total_difference'] / (adjustment_stats['start_adjusted'] + adjustment_stats['end_adjusted'])
+        print(f"  平均調整差: {avg_diff:.2f}秒")
+    
+    # 最初の3つの調整結果を表示
+    print(f"\n調整結果 (最初の3ウィンドウ):")
+    for i, window in enumerate(adjusted_windows[:3]):
+        start_status = "調整済み" if window.get('start_adjusted', False) else "未調整"
+        end_status = "調整済み" if window.get('end_adjusted', False) else "未調整"
+        
+        if window.get('start_adjusted', False) or window.get('end_adjusted', False):
+            print(f"  ウィンドウ{i+1}: {window['start_display']}-{window['end_display']}")
+            print(f"    元: {seconds_to_hms(window['original_start_seconds'])}-{seconds_to_hms(window['original_end_seconds'])}")
+            print(f"    開始: [{start_status}, 差: {window['start_adjustment_diff']:.1f}秒]")
+            print(f"    終了: [{end_status}, 差: {window['end_adjustment_diff']:.1f}秒]")
+        else:
+            print(f"  ウィンドウ{i+1}: {window['start_display']}-{window['end_display']} [未調整]")
+    
+    return adjusted_windows
+
+def assign_topic_labels_with_margin(sentences: List[str], sentence_metadata: List[Dict], time_windows: List[Dict], margin_seconds: float = 2.0) -> List[int]:
+    """
+    改善版：境界にマージンを設けてトピックラベルを割り当て
+    """
+    if not time_windows:
+        print("警告: 時間ウィンドウが空のため、すべての文にラベル0を割り当てます")
+        return [0] * len(sentences)
+    
+    print(f"境界マージン処理開始 (マージン: {margin_seconds}秒)")
+    print(f"文の数: {len(sentences)}, 時間ウィンドウ数: {len(time_windows)}")
+    
+    # マージン付きの拡張ウィンドウを作成
+    extended_windows = []
+    for window in time_windows:
+        extended_window = window.copy()
+        extended_window['start_seconds'] = max(0, window['start_seconds'] - margin_seconds)
+        extended_window['end_seconds'] = window['end_seconds'] + margin_seconds
+        extended_windows.append(extended_window)
+    
+    labels = []
+    boundary_counts = {i: 0 for i in range(len(time_windows))}
+    unassigned_count = 0
+    
+    for i, (sentence, metadata) in enumerate(zip(sentences, sentence_metadata)):
+        sentence_start = metadata['start']
+        sentence_end = metadata['end']
+        sentence_mid = (sentence_start + sentence_end) / 2  # 文中間時間
+        
+        assigned_label = -1
+        
+        # 方法1: 文中間時間で判定（優先）
+        for window_idx, window in enumerate(time_windows):
+            if window['start_seconds'] <= sentence_mid < window['end_seconds']:
+                assigned_label = window_idx
+                break
+        
+        # 方法2: 拡張ウィンドウで判定
+        if assigned_label == -1:
+            for window_idx, ext_window in enumerate(extended_windows):
+                if ext_window['start_seconds'] <= sentence_start < ext_window['end_seconds']:
+                    # 元のウィンドウ内かチェック
+                    orig_window = time_windows[window_idx]
+                    if orig_window['start_seconds'] <= sentence_start < orig_window['end_seconds']:
+                        assigned_label = window_idx
+                    else:
+                        # マージン領域の場合は前後の文から推定
+                        assigned_label = window_idx
+                        boundary_counts[window_idx] += 1
+                    break
+        
+        # 方法3: 文の開始時間で判定
+        if assigned_label == -1:
+            for window_idx, window in enumerate(time_windows):
+                if window['start_seconds'] <= sentence_start < window['end_seconds']:
+                    assigned_label = window_idx
+                    break
+        
+        # 方法4: 前後の文から推定（境界付近の場合）
+        if assigned_label == -1 and i > 0 and i < len(sentences)-1:
+            prev_label = labels[-1] if labels else -1
+            # 前の文のラベルが有効ならそれを使用
+            if prev_label != -1:
+                assigned_label = prev_label
+        
+        if assigned_label == -1:
+            unassigned_count += 1
+            # デバッグ情報
+            if unassigned_count <= 5:  # 最初の5件のみ表示
+                print(f"警告: 文{i} (時間: {sentence_start:.1f}秒) が未割り当て")
+                for w_idx, window in enumerate(time_windows):
+                    dist = min(abs(sentence_start - window['start_seconds']), 
+                              abs(sentence_start - window['end_seconds']))
+                    if dist < 5.0:
+                        print(f"  近接ウィンドウ{w_idx}: {window['start_display']}-{window['end_display']} (距離: {dist:.1f}秒)")
+        
+        labels.append(assigned_label)
+    
+    # 境界付近の統計を表示
+    total_boundary_assignments = sum(boundary_counts.values())
+    if total_boundary_assignments > 0:
+        print(f"\n境界マージン処理結果:")
+        print(f"  マージン領域で割り当てられた文: {total_boundary_assignments}文")
+        for window_idx, count in boundary_counts.items():
+            if count > 0:
+                window_info = time_windows[window_idx]
+                print(f"  ウィンドウ{window_idx} ({window_info['topic']}): {count}文")
+    
+    if unassigned_count > 0:
+        print(f"  未割り当て文: {unassigned_count}文")
+    
+    # 各ウィンドウに割り当てられた文の数を表示
+    window_counts = {}
+    for label in labels:
+        window_counts[label] = window_counts.get(label, 0) + 1
+    
+    print(f"\nトピックラベル割り当て結果:")
+    assigned_labels = sorted([k for k in window_counts.keys() if k != -1])
+    
+    for label in assigned_labels:
+        if label < len(time_windows) and label >= 0:
+            window_info = time_windows[label]
+            print(f"  ウィンドウ{label} ({window_info['topic']}): {window_counts[label]} 文")
+    
+    if -1 in window_counts:
+        print(f"  未割り当て (ラベル-1): {window_counts[-1]} 文")
+    
+    return labels
+
+def create_boundary_labels(topic_labels: List[int]) -> List[int]:
+    """
+    トピックラベルから境界ラベルを生成
+    """
+    boundaries = [0] * len(topic_labels)  # 0: 境界でない, 1: 境界
+    
+    boundary_count = 0
+    for i in range(1, len(topic_labels)):
+        if topic_labels[i] != topic_labels[i-1]:
+            boundaries[i] = 1
+            boundary_count += 1
+    
+    # 動画の最後も境界とする
+    if boundaries:
+        boundaries[-1] = 1
+        boundary_count += 1
+    
+    print(f"検出された境界数: {boundary_count}")
+    return boundaries
+
+def timestamp_to_seconds(t):
+    """
+    '1:23:45' → 5025.0
+    '-16:04'  → -964.0
+    '45'      → 45.0
+    """
+    try:
+        sign = -1 if t.startswith('-') else 1
+        t = t.lstrip('-')  # 負号を除去してから処理
+        parts = [float(x) for x in t.split(":" )]
+        if len(parts) == 3:
+            h, m, s = parts
+        elif len(parts) == 2:
+            h, m, s = 0, *parts
+        elif len(parts) == 1:
+            h, m, s = 0, 0, parts[0]
+        else:
+            return 0.0
+        return sign * (h * 3600 + m * 60 + s)
+    except Exception:
+        return 0.0
+
+def save_inference_data(
+    video_urls: List[str],  # 複数URL対応に変更
+    timetable_texts: List[str],  # 複数タイムテーブル対応
+    output_dir: str = "./inference_data",
+    model_configs: Dict = None,
+    use_comments: bool = True,  # コメント利用フラグを追加
+    save_raw_data: bool = True,  # 未加工データ保存フラグを追加
+    comment_window_start_offset: int = 10,  # コメント収集ウィンドウ開始オフセット（字幕開始からの秒数）
+    comment_window_end_offset: int = 15,  # コメント収集ウィンドウ終了オフセット（字幕開始からの秒数）
+    adjust_timetable: bool = False,  # タイムテーブル調整フラグ
+    min_sentence_length: int = 6,  # 短文結合の閾値
+    margin_seconds: float = 3.0  # 境界マージン秒数を追加
+):
+    """
+    推論用データと正解ラベルを生成・保存（複数動画対応版）
+    時間ウィンドウ形式（開始時間 終了時間 トピック）に対応
+    
+    Args:
+        video_urls: YouTube動画URLのリスト
+        timetable_texts: 各動画のタイムテーブルテキストのリスト（時間ウィンドウ形式）
+        output_dir: 出力ディレクトリ
+        model_configs: モデル設定
+        use_comments: コメントデータを使用するかどうか
+        save_raw_data: 未加工の字幕データを保存するかどうか
+        comment_window_start_offset: コメント収集ウィンドウ開始オフセット（字幕開始からの秒数）
+        comment_window_end_offset: コメント収集ウィンドウ終了オフセット（字幕開始からの秒数）
+        adjust_timetable: タイムテーブルを字幕修正後の時間に合わせて調整するか
+        min_sentence_length: 短文結合の最小文字数
+        margin_seconds: 境界マージンの秒数（デフォルト: 3.0秒）
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print("=== 推論データ生成を開始 ===")
+    print(f"コメント利用: {'有効' if use_comments else '無効'}")
+    print(f"未加工データ保存: {'有効' if save_raw_data else '無効'}")
+    print(f"コメントウィンドウ: 字幕開始+{comment_window_start_offset}秒 ～ 字幕開始+{comment_window_end_offset}秒")
+    print(f"タイムテーブル調整: {'有効' if adjust_timetable else '無効'}")
+    print(f"短文結合閾値: {min_sentence_length}文字未満")
+    print(f"境界マージン: {margin_seconds}秒")
+    
+    # デフォルトのモデル設定
+    if model_configs is None:
+        model_configs = {
+            "default": {
+                "coherence_model": "cl-tohoku/bert-base-japanese",
+                "topic_model": "pkshatech/simcse-ja-bert-base-clcmlp"
+            }
+        }
+    
+    all_sentences = []
+    all_sentence_metadata = []
+    all_boundary_labels = []
+    all_topic_labels = []
+    all_time_windows = []  # 時間ウィンドウ情報を保存
+    all_raw_chunks = []  # 未加工データ用
+    all_raw_metadata = []  # 未加工データ用
+    all_comment_vectors = []  # コメントベクトルを統合
+    all_adjusted_windows = []  # 調整済みウィンドウを保存
+    
+    # 未加工データ保存用ディレクトリ
+    raw_data_dir = f"{output_dir}/raw_transcripts"
+    
+    # 各動画ごとにデータを処理
+    for video_idx, (video_url, timetable_text) in enumerate(zip(video_urls, timetable_texts)):
+        print(f"\n--- 動画 {video_idx + 1}/{len(video_urls)} 処理中 ---")
+        print(f"URL: {video_url}")
+        
+        # 0. シンプルな字幕処理（新規実装）
+        print("0. シンプルな字幕処理実行...")
+        try:
+            sentences, sentence_metadata, raw_chunks, raw_metadata = simple_transcript_processing(
+                video_url, 
+                min_len=min_sentence_length,
+                debug_mode=True
+            )
+            print(f"シンプル処理完了: {len(sentences)} 文")
+        except Exception as e:
+            print(f"シンプル処理エラー: {e}")
+            print("デフォルトの処理で続行します")
+            # エラー時はデフォルト処理にフォールバック
+            from test_window import get_transcript
+            sentences, sentence_metadata, raw_chunks, raw_metadata = get_transcript(video_url)
+        
+        # 1. 未加工データの保存（オプション）
+        if save_raw_data:
+            print("1. 未加工字幕データの保存...")
+            try:
+                save_raw_transcript_to_csv(raw_chunks, raw_metadata, video_idx + 1, raw_data_dir)
+                all_raw_chunks.extend(raw_chunks)
+                all_raw_metadata.extend(raw_metadata)
+                print(f"未加工データ: {len(raw_chunks)} チャンク保存完了")
+            except Exception as e:
+                print(f"未加工データ保存エラー: {e}")
+                print("未加工データなしで続行します")
+        
+        # 2. 時間ウィンドウ形式のタイムテーブルの解析
+        print("2. 時間ウィンドウ形式のタイムテーブルを解析...")
+        time_windows = parse_topic_timetable(timetable_text)
+        
+        # 3. 時間ウィンドウによるフィルタリング
+        print("3. 時間ウィンドウによるフィルタリング...")
+        filtered_sentences, filtered_metadata = sentences, sentence_metadata
+        if time_windows:
+            filtered_sentences, filtered_metadata, _ = filter_by_time_windows(
+                sentences, sentence_metadata, [], time_windows
+            )
+        
+        # 4. タイムアライメント検証（フィルタリング後）
+        validate_time_alignment(filtered_sentences, filtered_metadata, time_windows, video_idx)
+        
+        # 5. 時間ウィンドウの調整（オプション）
+        if adjust_timetable:
+            print("5. 時間ウィンドウの調整...")
+            adjusted_windows = adjust_timetable_for_processed_transcript(time_windows, filtered_metadata)
+            time_windows = adjusted_windows  # 調整済みウィンドウを使用
+            all_adjusted_windows.extend(adjusted_windows)
+        else:
+            print("5. 時間ウィンドウの調整をスキップ...")
+        
+        # 6. トピックラベルの割り当て（改善版: マージン処理を使用）
+        print(f"6. トピックラベルの割り当て（マージン: {margin_seconds}秒）...")
+        topic_labels = assign_topic_labels_with_margin(
+            filtered_sentences, filtered_metadata, time_windows, margin_seconds
+        )
+        boundary_labels = create_boundary_labels(topic_labels)
+        
+        # 7. コメントデータの取得と処理（use_commentsフラグに基づいて実行）
+        comment_vectors = []
+        if use_comments:
+            print("7. コメントデータの取得...")
+            try:
+                comments = get_comments(video_url)
+                
+                # 時間ウィンドウによるコメントフィルタリング
+                if time_windows:
+                    _, _, filtered_comments = filter_by_time_windows(
+                        [], [], comments, time_windows
+                    )
+                    comments = filtered_comments
+                
+                # 修正: ウィンドウ設定を新しい形式で渡す
+                comment_vectors = build_comment_vectors(
+                    comments, 
+                    filtered_metadata,
+                    window_start_offset=comment_window_start_offset,
+                    window_end_offset=comment_window_end_offset
+                )
+                print(f"コメントベクトル数: {len(comment_vectors)}")
+                print(f"コメントウィンドウ設定: 字幕開始+{comment_window_start_offset}秒 ～ 字幕開始+{comment_window_end_offset}秒")
+            except Exception as e:
+                print(f"コメント取得エラー: {e}")
+                print("コメントデータなしで続行します")
+                comment_vectors = [torch.zeros(768) for _ in range(len(filtered_sentences))]
+        else:
+            print("7. コメントデータの取得をスキップ...")
+            # ダミーのコメントベクトルを作成
+            comment_vectors = [torch.zeros(768) for _ in range(len(filtered_sentences))]
+        
+        # データを全体リストに追加
+        all_sentences.extend(filtered_sentences)
+        all_sentence_metadata.extend(filtered_metadata)
+        all_boundary_labels.extend(boundary_labels)
+        all_comment_vectors.extend(comment_vectors)
+        
+        all_topic_labels.extend(topic_labels)
+        
+        # 時間ウィンドウ情報を統合（動画名を追加）
+        for window in time_windows:
+            all_time_windows.append({
+                'start_seconds': window['start_seconds'],
+                'end_seconds': window['end_seconds'],
+                'start_display': window['start_display'],
+                'end_display': window['end_display'],
+                'topic': f"動画{video_idx+1}: {window['topic']}",
+                'video_index': video_idx,
+                'duration': window.get('duration', window['end_seconds'] - window['start_seconds']),
+                'original_start_seconds': window.get('original_start_seconds', window['start_seconds']),
+                'original_end_seconds': window.get('original_end_seconds', window['end_seconds']),
+                'start_adjusted': window.get('start_adjusted', False),
+                'end_adjusted': window.get('end_adjusted', False)
+            })
+        
+        print(f"動画 {video_idx + 1} 処理完了:")
+        print(f"  - フィルタリング後文数: {len(filtered_sentences)}文")
+        print(f"  - 境界数: {sum(boundary_labels)}")
+        print(f"  - 時間ウィンドウ数: {len(time_windows)}")
+        print(f"  - 使用マージン: {margin_seconds}秒")
+        print(f"  - コメントウィンドウ: 字幕開始+{comment_window_start_offset}秒 ～ 字幕開始+{comment_window_end_offset}秒")
+    
+    # 8. 各モデル設定ごとにデータを生成
+    for config_name, config in model_configs.items():
+        print(f"\n8. {config_name} モデル用データ生成...")
+        
+        # モデル設定に基づいてトークナイザーを準備
+        coherence_tokenizer = AutoTokenizer.from_pretrained(config["coherence_model"])
+        
+        # Coherenceデータの生成
+        coherence_data = generate_coherence_data(all_sentences, history=2, window_size=10)
+        
+        # Coherenceデータのトークン化
+        coheren_inputs, coheren_masks, coheren_types = [], [], []
+        
+        with tqdm(total=len(coherence_data), desc=f"{config_name} Coherenceデータ変換") as pbar:
+            for pos_pair, _ in coherence_data:
+                context, cur = pos_pair
+                text1 = " [SEP] ".join(context)
+                text2 = cur[0] if cur else ""
+                
+                encoded = coherence_tokenizer(
+                    text1, text2, 
+                    truncation=True, 
+                    max_length=512,
+                    padding='max_length', 
+                    return_tensors='pt'
+                )
+                
+                coheren_inputs.append(encoded['input_ids'].squeeze(0).tolist())
+                coheren_masks.append(encoded['attention_mask'].squeeze(0).tolist())
+                coheren_types.append(encoded['token_type_ids'].squeeze(0).tolist())
+                pbar.update(1)
+        
+        # Topicデータのトークン化
+        topic_inputs, topic_masks = [], []
+        
+        # Topicモデル用トークナイザー
+        topic_tokenizer = AutoTokenizer.from_pretrained(config["topic_model"])
+        
+        with tqdm(total=len(all_sentences)-1, desc=f"{config_name} Topicデータ変換") as pbar:
+            for i in range(len(all_sentences)-1):
+                context, cur = all_sentences[i], all_sentences[i+1]
+                
+                topic_con = topic_tokenizer(
+                    context, 
+                    return_tensors="pt", 
+                    truncation=True, 
+                    max_length=128, 
+                    padding="max_length"
+                )
+                topic_cur = topic_tokenizer(
+                    cur, 
+                    return_tensors="pt", 
+                    truncation=True, 
+                    max_length=128, 
+                    padding="max_length"
+                )
+                
+                topic_inputs.append([
+                    topic_con['input_ids'].squeeze(0).tolist(),
+                    topic_cur['input_ids'].squeeze(0).tolist()
+                ])
+                topic_masks.append([
+                    topic_con['attention_mask'].squeeze(0).tolist(),
+                    topic_cur['attention_mask'].squeeze(0).tolist()
+                ])
+                pbar.update(1)
+        
+        # コメントベクトルの変換
+        comment_vectors_list = [vec.tolist() for vec in all_comment_vectors]
+        
+        # 9. データの保存（ファイル名をモデル名に変更）
+        print(f"9. {config_name} モデル用ファイルへの保存...")
+        
+        # 推論データの保存
+        inference_data = {
+            "coheren_inputs": coheren_inputs,
+            "coheren_masks": coheren_masks,
+            "coheren_types": coheren_types,
+            "topic_inputs": topic_inputs,
+            "topic_masks": topic_masks,
+            "comment_vectors": comment_vectors_list,
+            "sentences": all_sentences,
+            "sentence_metadata": all_sentence_metadata,
+            "model_config": config,
+            "use_comments": use_comments,
+            "save_raw_data": save_raw_data,
+            "comment_window_start_offset": comment_window_start_offset,
+            "comment_window_end_offset": comment_window_end_offset,
+            "adjust_timetable": adjust_timetable,
+            "min_sentence_length": min_sentence_length,
+            "margin_seconds": margin_seconds,  # マージン情報を追加
+            "time_windows": all_time_windows  # 時間ウィンドウ情報を追加
+        }
+        
+        model_output_dir = f"{output_dir}/{config_name}"
+        os.makedirs(model_output_dir, exist_ok=True)
+        
+        # ファイル名をモデル名に変更
+        filename = "inference_data.json"
+        with open(f"{model_output_dir}/{filename}", "w", encoding="utf-8") as f:
+            json.dump(inference_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"{config_name} モデル用推論データを保存: {model_output_dir}/{filename}")
+    
+    # 10. 正解ラベルの保存（全モデル共通）
+    print("10. 正解ラベルの保存...")
+    gold_labels = {
+        "boundary_labels": all_boundary_labels,
+        "topic_labels": all_topic_labels,
+        "time_windows": all_time_windows,  # 時間ウィンドウ情報
+        "sentences": all_sentences,
+        "sentence_metadata": all_sentence_metadata,
+        "video_count": len(video_urls),
+        "use_comments": use_comments,
+        "save_raw_data": save_raw_data,
+        "comment_window_start_offset": comment_window_start_offset,
+        "comment_window_end_offset": comment_window_end_offset,
+        "adjust_timetable": adjust_timetable,
+        "min_sentence_length": min_sentence_length,
+        "margin_seconds": margin_seconds,  # マージン情報を追加
+        "adjusted_windows": all_adjusted_windows if adjust_timetable else []
+    }
+    
+    with open(f"{output_dir}/gold_labels.json", "w", encoding="utf-8") as f:
+        json.dump(gold_labels, f, indent=2, ensure_ascii=False)
+    
+    # 11. 未加工データの統合CSVを作成（オプション）
+    if save_raw_data and all_raw_chunks:
+        print("11. 未加工データの統合CSVを作成...")
+        raw_summary_csv = f"{raw_data_dir}/all_raw_transcripts_summary.csv"
+        
+        with open(raw_summary_csv, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                '動画番号', 'チャンク番号', '開始時間(時:分:秒)', 
+                '終了時間(時:分:秒)', '開始時間(秒)', '終了時間(秒)',
+                '期間(秒)', '未加工字幕テキスト', '文字数', 'メモ'
+            ])
+            
+            chunk_counter = 0
+            current_video = 1
+            video_chunk_counts = {}
+            
+            for i, (chunk, meta) in enumerate(zip(all_raw_chunks, all_raw_metadata)):
+                # 動画番号の判定（簡易的な方法）
+                if i > 0 and i % 100 == 0:  # 適当な閾値
+                    current_video += 1
+                
+                if current_video not in video_chunk_counts:
+                    video_chunk_counts[current_video] = 0
+                
+                video_chunk_counts[current_video] += 1
+                chunk_counter += 1
+                
+                start_hms = seconds_to_hms(meta['start'])
+                end_hms = seconds_to_hms(meta['end'])
+                
+                # メモ欄
+                memo = ""
+                if '[' in chunk and ']' in chunk:
+                    memo = "タグを含む"
+                elif len(chunk) < 3:
+                    memo = "短い"
+                
+                writer.writerow([
+                    current_video,
+                    video_chunk_counts[current_video],
+                    start_hms,
+                    end_hms,
+                    f"{meta['start']:.3f}",
+                    f"{meta['end']:.3f}",
+                    f"{meta.get('duration', meta['end'] - meta['start']):.3f}",
+                    chunk,
+                    len(chunk),
+                    memo
+                ])
+        
+        print(f"未加工データ統合CSV保存完了: {raw_summary_csv}")
+    
+    # 12. CSV形式でも保存（可読性のため）
+    print("12. 加工済みデータのCSV保存...")
+    with open(f"{output_dir}/transcript_with_labels.csv", "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(["動画番号", "文番号", "開始時間", "終了時間", "字幕テキスト", 
+                        "トピック番号", "トピック名", "境界ラベル", "時間ウィンドウ", "調整済み", "マージン使用"])
+        
+        for i, (sentence, metadata, topic_idx, boundary) in enumerate(zip(
+            all_sentences, all_sentence_metadata, all_topic_labels, all_boundary_labels
+        )):
+            start_time = seconds_to_hms(metadata['start'])
+            end_time = seconds_to_hms(metadata['end'])
+            
+            # トピック情報の取得
+            if topic_idx < len(all_time_windows):
+                window_info = all_time_windows[topic_idx]
+                topic_name = window_info['topic']
+                time_window = f"{window_info['start_display']}-{window_info['end_display']}"
+                is_adjusted = window_info.get('start_adjusted', False) or window_info.get('end_adjusted', False)
+            else:
+                topic_name = "Unknown"
+                time_window = "Unknown"
+                is_adjusted = False
+            
+            # 動画番号の判定
+            video_num = 1
+            cumulative_sentences = 0
+            for video_idx in range(len(video_urls)):
+                if i < cumulative_sentences + len(all_sentences) * (video_idx + 1) / len(video_urls):
+                    video_num = video_idx + 1
+                    break
+                cumulative_sentences += len(all_sentences) * (video_idx + 1) / len(video_urls)
+            
+            writer.writerow([
+                video_num,
+                i + 1,
+                start_time,
+                end_time,
+                sentence,
+                topic_idx,
+                topic_name,
+                "○" if boundary == 1 else "",
+                time_window,
+                "○" if is_adjusted else "",
+                "○"  # マージン使用フラグ
+            ])
+    
+    print("\n=== 推論データ生成完了 ===")
+    print(f"出力ディレクトリ: {output_dir}")
+    print(f"総文数（加工済み）: {len(all_sentences)}")
+    print(f"境界数: {sum(all_boundary_labels)}")
+    print(f"時間ウィンドウ数: {len(all_time_windows)}")
+    print(f"動画数: {len(video_urls)}")
+    print(f"コメント利用: {'有効' if use_comments else '無効'}")
+    print(f"コメントウィンドウ: 字幕開始+{comment_window_start_offset}秒 ～ 字幕開始+{comment_window_end_offset}秒")
+    print(f"未加工データ保存: {'有効' if save_raw_data else '無効'}")
+    print(f"タイムテーブル調整: {'有効' if adjust_timetable else '無効'}")
+    print(f"短文結合閾値: {min_sentence_length}文字")
+    print(f"境界マージン: {margin_seconds}秒")
+    if save_raw_data:
+        print(f"未加工データディレクトリ: {raw_data_dir}")
+        print(f"総未加工チャンク数: {len(all_raw_chunks)}")
+    print(f"生成されたモデル設定: {list(model_configs.keys())}")
+
+if __name__ == "__main__":
+    # 複数の動画URLとタイムテーブルを定義
+    VIDEO_URLS = [
+        "https://www.youtube.com/watch?v=jmADUo9Vcho",
+    
+    ]
+    
+    # 各動画に対応するタイムテーブルを読み込む
+    TIMETABLE_TEXTS = []
+    for i in range(len(VIDEO_URLS)):
+        try:
+            with open(f"test_{i+1}.txt", "r", encoding="utf-8") as f:
+                TIMETABLE_TEXTS.append(f.read())
+        except FileNotFoundError:
+            print(f"警告: test_{i+1}.txt が見つかりません。デフォルトのタイムテーブルを使用します。")
+            # デフォルトの時間ウィンドウ形式
+            TIMETABLE_TEXTS.append("0:00:00 1:00:00 デフォルトトピック")
+    
+    # 複数のモデル設定を定義
+    MODEL_CONFIGS = {
+        "default": {
+            "coherence_model": "cl-tohoku/bert-base-japanese",
+            "topic_model": "pkshatech/simcse-ja-bert-base-clcmlp"
+        }
+    }
+    
+    # コメント利用フラグ（True: コメントを使用, False: コメントを使用しない）
+    USE_COMMENTS = True
+    
+    # 未加工データ保存フラグ（True: 未加工データを保存, False: 保存しない）
+    SAVE_RAW_DATA = True
+    
+    # コメント収集ウィンドウ設定（秒）: 字幕開始+10秒 ～ 字幕開始+15秒
+    COMMENT_WINDOW_START_OFFSET = 10   # 字幕開始からの開始オフセット
+    COMMENT_WINDOW_END_OFFSET = 15     # 字幕開始からの終了オフセット
+    
+    # タイムテーブル調整フラグ
+    ADJUST_TIMETABLE = True
+    
+    # 短文結合の閾値（文字数）
+    MIN_SENTENCE_LENGTH = 6
+    
+    # 境界マージン秒数
+    MARGIN_SECONDS = 3.0
+    
+    save_inference_data(
+        video_urls=VIDEO_URLS,
+        timetable_texts=TIMETABLE_TEXTS,
+        output_dir="./inference_data",
+        model_configs=MODEL_CONFIGS,
+        use_comments=USE_COMMENTS,
+        save_raw_data=SAVE_RAW_DATA,
+        comment_window_start_offset=COMMENT_WINDOW_START_OFFSET,
+        comment_window_end_offset=COMMENT_WINDOW_END_OFFSET,
+        adjust_timetable=ADJUST_TIMETABLE,
+        min_sentence_length=MIN_SENTENCE_LENGTH,
+        margin_seconds=MARGIN_SECONDS
+    )
+--- ./src/data_creaters/簡易化版/test_window.py ---
+import os
+import csv
+import re
+import random
+import pytchat
+from typing import List, Dict, Tuple
+from tqdm import tqdm
+import torch
+from transformers import AutoTokenizer, AutoModel, AutoModelForNextSentencePrediction
+from youtube_transcript_api import YouTubeTranscriptApi
+from pytube import YouTube
+from collections import Counter
+import MeCab
+import unicodedata
+import time
+from functools import lru_cache
+import torch.nn.functional as F
+
+from common_transcript_processing import (
+    seconds_to_hms,
+    get_raw_transcript,
+    basic_transcript_processing,
+    save_transcript_to_csv,
+    hms_to_seconds
+)
+
+print("=== 初期化処理を開始します ===")
+
+
+# NEologd辞書を使用するTaggerの設定
+def create_neologd_tagger():
+    """NEologd辞書を使用するMeCab Taggerを作成"""
+    print("MeCab Taggerの初期化を開始します...")
+    try:
+        # NEologd辞書のパスを探す
+        neologd_dic_path = None
+        for root, dirs, files in os.walk('/usr/lib/x86_64-linux-gnu/mecab/dic'):
+            if 'mecab-ipadic-neologd' in root:
+                neologd_dic_path = root
+                break
+        
+        if neologd_dic_path is None:
+            # 見つからない場合はデフォルトパスを試す
+            neologd_dic_path = '/usr/lib/x86_64-linux-gnu/mecab/dic/mecab-ipadic-neologd'
+        
+        if os.path.exists(neologd_dic_path):
+            tagger = MeCab.Tagger(f'-d {neologd_dic_path}')
+            print(f"NEologd辞書を使用: {neologd_dic_path}")
+        else:
+            tagger = MeCab.Tagger('-Owakati')
+            print("NEologd辞書が見つからないため、デフォルト辞書を使用します")
+            
+        return tagger
+    except Exception as e:
+        print(f"NEologd辞書の初期化に失敗: {e}")
+        print("デフォルト辞書を使用します")
+        return MeCab.Tagger('-Owakati')
+
+# グローバルなTaggerインスタンスを作成
+tagger = create_neologd_tagger()
+
+# ==============================
+# モデル準備
+# ==============================
+print("モデルの準備を開始します...")
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"使用デバイス: {DEVICE}")
+
+print("トークナイザーとモデルの読み込み中...")
+NSP_MODEL_NAME = "cl-tohoku/bert-base-japanese"
+tokenizer = AutoTokenizer.from_pretrained(NSP_MODEL_NAME)
+nsp_tokenizer = AutoTokenizer.from_pretrained(NSP_MODEL_NAME)
+nsp_model = AutoModelForNextSentencePrediction.from_pretrained(NSP_MODEL_NAME).to(DEVICE)
+nsp_model.eval()
+
+SIMCSE_MODEL_NAME = "pkshatech/simcse-ja-bert-base-clcmlp"
+simcse_tokenizer = AutoTokenizer.from_pretrained(SIMCSE_MODEL_NAME)
+simcse_model = AutoModel.from_pretrained(SIMCSE_MODEL_NAME)
+simcse_model.to(DEVICE)
+simcse_model.eval()
+
+LANGUAGE = "ja"
+
+
+# ================================================
+# 新しい字幕処理関数群（共通処理を使用するように修正）
+# ================================================
+def find_sentence_boundary_candidates(text: str, tagger) -> List[int]:
+    """
+    形態素解析して文末候補（発話が途切れそうな箇所）を抽出
+    口語日本語の特性を考慮した文末候補を検出
+    """
+    candidates = []
+    
+    # テキストを形態素解析
+    node = tagger.parseToNode(text)
+    pos_list = []
+    surfaces = []
+    
+    while node:
+        if node.surface:
+            feature = node.feature.split(',')
+            pos = feature[0] if len(feature) > 0 else ''
+            pos1 = feature[1] if len(feature) > 1 else ''
+            surfaces.append(node.surface)
+            pos_list.append((pos, pos1))
+        node = node.next
+    
+    if not surfaces:
+        return candidates
+    
+    current_length = 0
+    for i, ((pos, pos1), surface) in enumerate(zip(pos_list, surfaces)):
+        current_length += len(surface)
+        
+        # 文末候補の条件（口語日本語の特性を考慮）
+        is_candidate = False
+        
+        # 1. 動詞で終わる（終止形・連体形）
+        if pos == "動詞":
+            is_candidate = True
+        
+        # 2. 助詞で終わる（特に終助詞・間投助詞）
+        elif pos == "助詞":
+            if pos1 in ["終助詞", "間投助詞"]:
+                is_candidate = True
+            # "ね"、"よ"、"よね"などの口語表現
+            elif surface in ["ね", "よ", "よね", "か", "かな", "かしら"]:
+                is_candidate = True
+        
+        # 3. 助動詞で終わる
+        elif pos == "助動詞":
+            is_candidate = True
+        
+        # 4. 名詞＋だ／です（断定）
+        elif (pos == "名詞" and i > 0 and 
+              pos_list[i-1][0] == "名詞" and
+              surface in ["だ", "です", "である"]):
+            is_candidate = True
+        
+        # 5. 感動詞で終わる
+        elif pos == "感動詞":
+            is_candidate = True
+        
+        # 6. 接続助詞の前（「て形」などで文が続く可能性が高い場所）
+        elif pos == "助詞" and pos1 == "接続助詞":
+            # 「て」、「たり」、「ながら」など
+            if surface in ["て", "で", "たり", "ながら", "し"]:
+                is_candidate = True
+        
+        # 最低文字数チェック（短すぎる文を防ぐ）
+        if is_candidate and current_length >= 3:  # 最低3文字以上
+            candidates.append(current_length)
+    
+    # 最後の位置も候補に追加（文全体）
+    if len(text) >= 3:
+        candidates.append(len(text))
+    
+    # 重複を除去して返す
+    return sorted(list(set(candidates)))
+
+def compute_nsp_score(sentence_a, sentence_b):
+    """文A→文Bの自然なつながりを生スコア（logitsの差）で算出"""
+    inputs = nsp_tokenizer(
+        sentence_a, 
+        sentence_b, 
+        return_tensors="pt", 
+        truncation=True, 
+        max_length=512
+    ).to(DEVICE)
+    
+    with torch.no_grad():
+        logits = nsp_model(**inputs).logits
+        
+        # softmax確率ではなく、生のlogitsの差を計算
+        # logits[0]: IsNextスコア, logits[1]: NotNextスコア
+        raw_score = logits[0, 0] - logits[0, 1]  # IsNext - NotNext
+        
+        return raw_score.item()  # 生スコアを返す
+
+def split_combined_chunks_with_nsp(combined_text: str, tagger, debug_mode: bool = False) -> List[str]:
+    """
+    2チャンク結合テキストをNSPの生スコアで最適な境界で分割
+    """
+    if len(combined_text) <= 10:
+        return [combined_text]
+    
+    candidates = find_sentence_boundary_candidates(combined_text, tagger)
+    if not candidates:
+        return [combined_text]
+    
+    candidate_scores = []
+    for candidate_pos in candidates:
+        if candidate_pos >= len(combined_text):
+            continue
+        left_text = combined_text[:candidate_pos]
+        right_text = combined_text[candidate_pos:]
+        
+        # 生スコアを計算（softmax確率ではなく）
+        nsp_raw_score = compute_nsp_score(left_text, right_text)
+        candidate_scores.append((candidate_pos, nsp_raw_score, left_text, right_text))
+    
+    if not candidate_scores:
+        return [combined_text]
+    
+    # 生スコアが最も高い候補を選択
+    # 生スコアは正の値が大きいほど「つながりが自然」、負の値が大きいほど「つながらない」
+    best_candidate = max(candidate_scores, key=lambda x: x[1])
+    best_pos, best_raw_score, left_text, right_text = best_candidate
+    
+    if debug_mode:
+        print(f"  候補スコア（生）:")
+        for pos, score, l_text, r_text in candidate_scores:
+            print(f"    位置{pos}: スコア={score:.4f}, 左:『{l_text[:20]}...』, 右:『{r_text[:20]}...』")
+        print(f"  最良候補: 位置={best_pos}, 生スコア={best_raw_score:.4f}")
+    
+    # 閾値の調整：生スコアの場合は適切な閾値を設定する必要があります
+    # 例: 0より大きければ結合が自然、0より小さければ不自然
+    if best_raw_score < 0:  # 負の値は「つながらない」と判断
+        return [combined_text]
+    
+    result = [left_text]
+    if right_text.strip():
+        result.extend(split_combined_chunks_with_nsp(right_text, tagger, debug_mode))
+    
+    return result
+    
+def analyze_chunk_characteristics(chunks: List[str]) -> Dict:
+    """
+    チャンクの統計的特性を分析
+    """
+    lengths = [len(chunk) for chunk in chunks]
+    char_counts = [len(re.findall(r'[。．.！!？?]', chunk)) for chunk in chunks]
+    
+    return {
+        'total_chunks': len(chunks),
+        'avg_length': sum(lengths) / len(lengths),
+        'max_length': max(lengths),
+        'min_length': min(lengths),
+        'ending_punctuation_ratio': sum(1 for c in char_counts if c > 0) / len(chunks),
+        'length_distribution': {
+            'very_short': sum(1 for l in lengths if l <= 5),
+            'short': sum(1 for l in lengths if 5 < l <= 15),
+            'medium': sum(1 for l in lengths if 15 < l <= 30),
+            'long': sum(1 for l in lengths if l > 30),
+        }
+    }
+
+# ================================================
+# 修正箇所: split_sentences_from_chunks関数を共通処理に置き換え
+# ================================================
+def split_sentences_from_chunks(raw_chunks: List[str], metadata_list: List[Dict], min_len: int = 6, max_len: int = 60, debug_nsp: bool = False):
+    """基本的な字幕チャンク分割処理（共通処理を使用）"""
+    
+    print("基本的な字幕処理を開始します...")
+    
+    # 共通処理を使用して基本的な字幕処理を実行
+    sentences, sentence_metadata = basic_transcript_processing(
+        raw_chunks, 
+        metadata_list,
+        min_len=min_len,
+        max_len=max_len,
+        debug_mode=debug_nsp
+    )
+    
+    print(f"基本的な処理完了: {len(sentences)} 文")
+    
+    # 従来の表示部分を保持
+    print("=" * 60)
+    print("処理後の字幕とタイムスタンプ")
+    print("=" * 60)
+
+    total_sentences = len(sentences)
+    print(f"総文数: {total_sentences}")
+
+    print("\n【最初の10件】")
+    for i in range(min(10, total_sentences)):
+        s = sentences[i]
+        meta = sentence_metadata[i]
+        start_hms = seconds_to_hms(meta['start'])
+        end_hms = seconds_to_hms(meta['end'])
+        print(f"{i+1:3d}. [{start_hms} - {end_hms}] {s}")
+
+    if total_sentences > 10:
+        print(f"\n【最後の10件】")
+        for i in range(max(0, total_sentences - 10), total_sentences):
+            s = sentences[i]
+            meta = sentence_metadata[i]
+            start_hms = seconds_to_hms(meta['start'])
+            end_hms = seconds_to_hms(meta['end'])
+            print(f"{i+1:3d}. [{start_hms} - {end_hms}] {s}")
+
+    print("=" * 60)
+    return sentences, sentence_metadata
+
+def normalize_text(text):
+    """テキストを正規化"""
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def analyze_pos_patterns(sentences: List[str]) -> Dict:
+    """
+    チャンク化された文章の最初の2品詞と最後の2品詞の組み合わせの割合を分析
+    """
+    print("品詞パターン分析を開始します...")
+    first_pos_patterns = []
+    last_pos_patterns = []
+    
+    # 特定の品詞パターンを持つ文章を記録
+    target_patterns = []
+    
+    # プログレスバーで品詞分析の進捗を表示
+    with tqdm(total=len(sentences), desc="品詞分析") as pbar:
+        for sentence in sentences:
+            if not sentence.strip():
+                pbar.update(1)
+                continue
+                
+            # テキストを正規化
+            normalized_sentence = normalize_text(sentence)
+            
+            # MeCabで解析
+            parsed = tagger.parse(normalized_sentence)
+            node = tagger.parseToNode(normalized_sentence)
+            nodes = []
+            while node:
+                if node.surface != "":  # 空白ノードを除外
+                    feature = node.feature.split(',')
+                    nodes.append({
+                        'surface': node.surface,
+                        'feature': feature,
+                        'pos': feature[0] if len(feature) > 0 else '',
+                        'pos1': feature[1] if len(feature) > 1 else '',
+                        'pos2': feature[2] if len(feature) > 2 else '',
+                        'conjtype': feature[4] if len(feature) > 4 else '',
+                    })
+                node = node.next
+            
+            if len(nodes) < 2:
+                pbar.update(1)
+                continue
+                
+            # 最初の2品詞の組み合わせ
+            first_pos1 = nodes[0]['pos'] if nodes[0]['pos'] else ''
+            first_pos2 = nodes[1]['pos'] if nodes[1]['pos'] else ''
+            first_pattern = f"{first_pos1}+{first_pos2}"
+            first_pos_patterns.append(first_pattern)
+            
+            # 最後の2品詞の組み合わせ
+            last_pos1 = nodes[-2]['pos'] if nodes[-2]['pos'] else ''
+            last_pos2 = nodes[-1]['pos'] if nodes[-1]['pos'] else ''
+            last_pattern = f"{last_pos1}+{last_pos2}"
+            last_pos_patterns.append(last_pattern)
+            
+            # 特定の品詞パターンを持つ文章を記録
+            target_last_pattern1 = "助詞+助詞"
+            target_last_pattern2 = "助詞+連体詞" 
+            target_first_pattern = "助動詞+助詞"
+            
+            if last_pattern == target_last_pattern1:
+                target_patterns.append({
+                    'sentence': sentence,
+                    'pattern_type': '最後の2品詞',
+                    'pattern': target_last_pattern1,
+                    'position': '末尾'
+                })
+            
+            if last_pattern == target_last_pattern2:
+                target_patterns.append({
+                    'sentence': sentence,
+                    'pattern_type': '最後の2品詞', 
+                    'pattern': target_last_pattern2,
+                    'position': '末尾'
+                })
+                
+            if first_pattern == target_first_pattern:
+                target_patterns.append({
+                    'sentence': sentence,
+                    'pattern_type': '最初の2品詞',
+                    'pattern': target_first_pattern, 
+                    'position': '先頭'
+                })
+            
+            pbar.update(1)
+    
+    # 出現頻度を計算
+    first_pos_counter = Counter(first_pos_patterns)
+    last_pos_counter = Counter(last_pos_patterns)
+    
+    # 割合を計算
+    total_sentences = len(first_pos_patterns)
+    
+    first_pos_ratios = {pattern: count/total_sentences for pattern, count in first_pos_counter.items()}
+    last_pos_ratios = {pattern: count/total_sentences for pattern, count in last_pos_counter.items()}
+    
+    return {
+        "first_pos_patterns": dict(first_pos_counter),
+        "last_pos_patterns": dict(last_pos_counter),
+        "first_pos_ratios": first_pos_ratios,
+        "last_pos_ratios": last_pos_ratios,
+        "total_analyzed_sentences": total_sentences,
+        "target_pattern_sentences": target_patterns
+    }
+
+def print_pos_analysis(analysis_result: Dict):
+    """
+    品詞組み合わせの分析結果を表示
+    """
+    print("\n" + "="*80)
+    print("品詞組み合わせ分析結果 (NEologd辞書使用)")
+    print("="*80)
+    
+    print(f"分析対象文数: {analysis_result['total_analyzed_sentences']}")
+    
+    print("\n【最初の2品詞の組み合わせ（出現頻度順）】")
+    print("-" * 50)
+    sorted_first = sorted(analysis_result['first_pos_ratios'].items(), 
+                         key=lambda x: x[1], reverse=True)
+    for pattern, ratio in sorted_first[:10]:
+        count = analysis_result['first_pos_patterns'][pattern]
+        print(f"  {pattern}: {count}回 ({ratio*100:.2f}%)")
+    
+    print("\n【最後の2品詞の組み合わせ（出現頻度順）】")
+    print("-" * 50)
+    sorted_last = sorted(analysis_result['last_pos_ratios'].items(), 
+                        key=lambda x: x[1], reverse=True)
+    for pattern, ratio in sorted_last[:10]:
+        count = analysis_result['last_pos_patterns'][pattern]
+        print(f"  {pattern}: {count}回 ({ratio*100:.2f}%)")
+    
+    # 最も頻出する組み合わせを表示
+    if sorted_first:
+        most_common_first = sorted_first[0]
+        print(f"\n★ 最も頻出する文頭品詞組み合わせ: '{most_common_first[0]}' ({most_common_first[1]*100:.2f}%)")
+    
+    if sorted_last:
+        most_common_last = sorted_last[0]
+        print(f"★ 最も頻出する文末品詞組み合わせ: '{most_common_last[0]}' ({most_common_last[1]*100:.2f}%)")
+    
+    # 特定の品詞パターンを持つ文章を表示
+    target_sentences = analysis_result.get('target_pattern_sentences', [])
+    if target_sentences:
+        print("\n" + "="*80)
+        print("特定品詞パターンを持つ文章")
+        print("="*80)
+        
+        # パターンごとにグループ化
+        pattern_groups = {}
+        for item in target_sentences:
+            pattern_key = f"{item['pattern_type']}: {item['pattern']}"
+            if pattern_key not in pattern_groups:
+                pattern_groups[pattern_key] = []
+            pattern_groups[pattern_key].append(item['sentence'])
+        
+        for pattern_key, sentences in pattern_groups.items():
+            print(f"\n【{pattern_key}】")
+            print("-" * 50)
+            for i, sentence in enumerate(sentences, 1):
+                # 分かち書きと品詞情報を表示
+                normalized_sentence = normalize_text(sentence)
+                parsed = tagger.parse(normalized_sentence)
+                node = tagger.parseToNode(normalized_sentence)
+                
+                wakati_words = []
+                pos_info = []
+                while node:
+                    if node.surface != "":
+                        feature = node.feature.split(',')
+                        pos = feature[0] if len(feature) > 0 else ''
+                        wakati_words.append(node.surface)
+                        pos_info.append(f"{node.surface}({pos})")
+                    node = node.next
+                
+                print(f"{i}. 文章全体: {sentence}")
+                print(f"   分かち書き: {parsed.strip()}")
+                print(f"   品詞情報: {' '.join(pos_info)}")
+                print()
+    
+    print("="*80)
+
+# ==============================
+# 修正箇所: 字幕取得処理（共通処理を使用）
+# ==============================
+def get_transcript(video_url: str, debug_nsp: bool = False) -> Tuple[List[str], List[Dict]]:
+    print("字幕取得処理を開始します...")
+    
+    # 共通処理を使用して生字幕データを取得
+    raw_chunks, raw_metadata = get_raw_transcript(video_url, LANGUAGE)
+    print(f"取得した生の字幕チャンク数: {len(raw_chunks)}")
+    
+    print("基本的な字幕処理を実行中...")
+    # 共通処理を使用して基本的な字幕処理を実行
+    sentences, sentence_metadata = basic_transcript_processing(
+        raw_chunks, 
+        raw_metadata,
+        min_len=6,
+        max_len=60,
+        debug_mode=debug_nsp
+    )
+
+    print(f"字幕取得成功: {len(sentences)} 文を取得")
+    return sentences, sentence_metadata, raw_chunks, raw_metadata
+
+# ==============================
+# コメント処理
+# ==============================
+def get_comments(video_url: str) -> List[Dict]:
+    print("コメント取得を開始します...")
+    video_id = YouTube(video_url).video_id
+    chat = pytchat.create(video_id=video_id)
+    comments = []
+    
+    print("リアルタイムコメントを収集中...")
+    with tqdm(desc="コメント収集") as pbar:
+        while chat.is_alive():
+            for c in chat.get().items:
+                comments.append({
+                    "text": c.message,
+                    "time": c.elapsedTime
+                })
+                pbar.update(1)
+    
+    print(f"コメント取得成功: {len(comments)} 件")
+    return comments
+
+def embed_comment(text: str) -> torch.Tensor:
+    inputs = simcse_tokenizer(text, return_tensors="pt", truncation=True, max_length=128).to(DEVICE)
+    with torch.no_grad():
+        outputs = simcse_model(**inputs)
+        # SimCSEは[CLS]ベクトルを利用
+        emb = outputs.last_hidden_state[:, 0, :]
+    return emb.squeeze(0).cpu()
+
+def timestamp_to_seconds(t):
+    """
+    '1:23:45' → 5025.0
+    '-16:04'  → -964.0
+    '45'      → 45.0
+    """
+    try:
+        sign = -1 if t.startswith('-') else 1
+        t = t.lstrip('-')  # 負号を除去してから処理
+        parts = [float(x) for x in t.split(":" )]
+        if len(parts) == 3:
+            h, m, s = parts
+        elif len(parts) == 2:
+            h, m, s = 0, *parts
+        elif len(parts) == 1:
+            h, m, s = 0, 0, parts[0]
+        else:
+            return 0.0
+        return sign * (h * 3600 + m * 60 + s)
+    except Exception:
+        return 0.0
+
+def build_comment_vectors(comments: List[Dict], sentence_metadata: List[Dict], 
+                         window_start_offset: int = 10, window_end_offset: int = 15) -> List[torch.Tensor]:
+    """
+    コメントベクトル構築（ウィンドウ設定を字幕開始からのオフセットで指定）
+    
+    Args:
+        comments: コメントデータ
+        sentence_metadata: 文のメタデータ（修正処理後の時間）
+        window_start_offset: コメント収集開始オフセット（字幕開始からの秒数）
+        window_end_offset: コメント収集終了オフセット（字幕開始からの秒数）
+    """
+    print("コメントベクトル構築を開始します...")
+    print(f"ウィンドウ設定: 字幕開始+{window_start_offset}秒 ～ 字幕開始+{window_end_offset}秒")
+    
+    comment_vecs = []
+    
+    print("コメント埋め込みを計算中...")
+    # 事前に全コメント埋め込みをキャッシュ
+    with tqdm(total=len(comments), desc="コメント埋め込み") as pbar:
+        for c in comments:
+            c["vec"] = embed_comment(c["text"])
+            # 時間を秒数に変換してキャッシュ
+            c["timestamp_seconds"] = timestamp_to_seconds(c["time"])
+            pbar.update(1)
+
+    print("文ごとのコメントベクトルを構築中...")
+    with tqdm(total=len(sentence_metadata), desc="コメントベクトル構築") as pbar:
+        for i, meta in enumerate(sentence_metadata):
+            sentence_start = meta["start"]
+            
+            # 字幕開始時間からのオフセットでウィンドウを計算
+            window_start = sentence_start + window_start_offset  # 字幕開始+10秒
+            window_end = sentence_start + window_end_offset      # 字幕開始+15秒
+            
+            # デバッグ情報（最初の数文のみ）
+            if i < 5:
+                print(f"文{i}: 字幕開始={sentence_start:.1f}秒, ウィンドウ={window_start:.1f}-{window_end:.1f}秒")
+            
+            # ウィンドウ内のコメントをフィルタリング
+            window_comments = []
+            for c in comments:
+                comment_time = c["timestamp_seconds"]
+                if window_start <= comment_time <= window_end:
+                    window_comments.append(c["vec"])
+            
+            if window_comments:
+                avg_vec = torch.stack(window_comments).mean(dim=0)
+                if i < 5:  # デバッグ
+                    print(f"  コメント数: {len(window_comments)}")
+            else:
+                avg_vec = torch.zeros(simcse_model.config.hidden_size)
+                if i < 5:  # デバッグ
+                    print(f"  コメント数: 0")
+            
+            comment_vecs.append(avg_vec)
+            pbar.update(1)
+            
+    return comment_vecs
+
+# ==============================
+# Coherenceモデル用データ生成
+# ==============================
+def generate_coherence_data(sentences: List[str], history: int = 2, window_size: int = 10):
+    """
+    Coherenceモデル用のデータを生成
+    - context: 現在発話の前後から取得
+    - cur: 現在発話（正例）
+    - neg: 現在位置から±window_size分外のランダム発話
+    """
+    print("Coherenceモデル用データを生成中...")
+    data = []
+    dial_len = len(sentences)
+    
+    with tqdm(total=dial_len, desc="Coherenceデータ生成") as pbar:
+        for utt_idx in range(dial_len):
+            context, cur, neg = [], [], []
+            
+            # neg_index: 現在位置から±window_size分外からランダム選択
+            valid_neg_indices = []
+            for i in range(dial_len):
+                if i < utt_idx - window_size or i > utt_idx + window_size:
+                    valid_neg_indices.append(i)
+            
+            if valid_neg_indices:
+                neg_index = random.choice(valid_neg_indices)
+            else:
+                neg_index = random.randint(0, dial_len - 1)
+            
+            # contextの構築（双方向）
+            l, r = utt_idx, utt_idx + 1
+            for _ in range(history):
+                if l > -1:
+                    context.append(sentences[l])
+                    l -= 1
+                if r < dial_len:
+                    cur.append(sentences[r])
+                    r += 1
+            
+            context.reverse()
+            
+            if context and cur:  # 有効なデータのみ追加
+                data.append([(context, cur), (context, [sentences[neg_index]])])
+            
+            pbar.update(1)
+    
+    return data
+
+# ==============================
+# 生チャンクをCSVに保存する関数
+# ==============================
+def save_raw_chunks_to_csv(raw_chunks: List[str], metadata_list: List[Dict], csv_save_path: str):
+    """
+    生チャンクをCSVファイルに保存する
+    """
+    print("生チャンクをCSVに保存します...")
+    
+    with open(csv_save_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
+        writer = csv.writer(csvfile)
+        # ヘッダーを書き込み
+        writer.writerow(['チャンク番号', '開始時間', '終了時間', '開始時間(秒)', '終了時間(秒)', '生チャンクテキスト'])
+        
+        # データを書き込み
+        with tqdm(total=len(raw_chunks), desc="生チャンクCSV保存") as pbar:
+            for i, (chunk, metadata) in enumerate(zip(raw_chunks, metadata_list)):
+                start_seconds = metadata['start']
+                end_seconds = metadata['start'] + metadata['duration']
+                
+                # 秒を時:分:秒形式に変換
+                start_hms = seconds_to_hms(start_seconds)
+                end_hms = seconds_to_hms(end_seconds)
+                
+                writer.writerow([
+                    i + 1,
+                    start_hms,
+                    end_hms,
+                    f"{start_seconds:.2f}",
+                    f"{end_seconds:.2f}",
+                    chunk
+                ])
+                pbar.update(1)
+    
+    print(f"生チャンクをCSVに保存しました: {csv_save_path}")
+
+# ==============================
+# メイン処理
+# ==============================
+def preprocess_and_save_with_csv(video_url: str, save_path: str, csv_save_path: str = None, history: int = 2, window_size: int = 10, debug_nsp: bool = True, enable_comments: bool = True, comment_window_start_offset: int = 10, comment_window_end_offset: int = 15):
+    """
+    既存の処理に加えて、字幕をCSVでも保存する拡張関数（デバッグモード追加）
+    共通処理を使用するように修正
+    
+    Args:
+        enable_comments: コメント取得を有効にするかどうか
+        comment_window_start_offset: コメント収集ウィンドウ開始オフセット（字幕開始からの秒数）
+        comment_window_end_offset: コメント収集ウィンドウ終了オフセット（字幕開始からの秒数）
+    """
+    print("=== 前処理を開始します ===")
+    
+    # データ取得
+    print("1. 字幕データの取得を開始")
+    sentences, sentence_metadata, raw_chunks, raw_metadata = get_transcript(video_url, debug_nsp)  # 生チャンクも取得
+    
+    # ★追加: 生チャンクをCSVに保存
+    if csv_save_path:
+        raw_chunks_csv_path = csv_save_path.replace('.csv', '_raw_chunks.csv')
+        save_raw_chunks_to_csv(raw_chunks, raw_metadata, raw_chunks_csv_path)
+    
+    # ★追加: 品詞組み合わせの分析
+    print("2. 品詞組み合わせの分析を開始")
+    pos_analysis = analyze_pos_patterns(sentences)
+    print_pos_analysis(pos_analysis)
+    
+    # CSV保存（オプション） - 共通処理を使用
+    if csv_save_path:
+        print(f"3. CSVファイルへの保存を開始: {csv_save_path}")
+        save_transcript_to_csv(sentences, sentence_metadata, csv_save_path, "字幕テキスト")
+    
+    # コメント処理をオプション化
+    if enable_comments:
+        print("4. コメントデータの取得を開始")
+        comments = get_comments(video_url)
+        
+        print("5. コメントベクトルの構築を開始")
+        com_vecs = build_comment_vectors(comments, sentence_metadata, 
+                                        window_start_offset=comment_window_start_offset, 
+                                        window_end_offset=comment_window_end_offset)
+    else:
+        print("4. コメント取得はスキップします")
+        comments = []
+        # 空のコメントベクトルを作成
+        com_vecs = [torch.zeros(simcse_model.config.hidden_size) for _ in range(len(sentences))]
+
+    # Coherenceモデル用データ生成
+    print("6. Coherenceモデル用データの生成を開始")
+    coherence_data = generate_coherence_data(sentences, history, window_size)
+    
+    # NSP用トークン化 (Coherenceモデル用)
+    print("7. トークン化処理を開始")
+    coheren_inputs_pos, coheren_masks_pos, coheren_types_pos = [], [], []
+    coheren_inputs_neg, coheren_masks_neg, coheren_types_neg = [], [], []
+
+    with tqdm(total=len(coherence_data), desc="トークン化") as pbar:
+        for pos_pair, neg_pair in coherence_data:
+            # 正例（context, cur）
+            context, response = pos_pair
+            context_text = " [SEP] ".join(context)
+            response_text = response[0] if response else ""
+            encoded_pos = tokenizer(
+                context_text,
+                response_text,
+                truncation=True,
+                max_length=512,
+                padding='max_length',
+                return_tensors='pt'
+            )
+            coheren_inputs_pos.append(encoded_pos['input_ids'].squeeze(0))
+            coheren_masks_pos.append(encoded_pos['attention_mask'].squeeze(0))
+            coheren_types_pos.append(encoded_pos['token_type_ids'].squeeze(0))
+
+            # 負例（context, neg）
+            context, response = neg_pair
+            context_text = " [SEP] ".join(context)
+            response_text = response[0] if response else ""
+            encoded_neg = tokenizer(
+                context_text,
+                response_text,
+                truncation=True,
+                max_length=512,
+                padding='max_length',
+                return_tensors='pt'
+            )
+            coheren_inputs_neg.append(encoded_neg['input_ids'].squeeze(0))
+            coheren_masks_neg.append(encoded_neg['attention_mask'].squeeze(0))
+            coheren_types_neg.append(encoded_neg['token_type_ids'].squeeze(0))
+            
+            pbar.update(1)
+
+    # 正例・負例を結合して (N, 2, seq_len) へ整形
+    print("8. テンソルの整形を開始")
+    coheren_inputs = torch.stack([torch.stack([p, n]) for p, n in zip(coheren_inputs_pos, coheren_inputs_neg)])
+    coheren_masks = torch.stack([torch.stack([p, n]) for p, n in zip(coheren_masks_pos, coheren_masks_neg)])
+    coheren_types = torch.stack([torch.stack([p, n]) for p, n in zip(coheren_types_pos, coheren_types_neg)])
+
+    # Topicモデル用データ
+    print("9. Topicモデル用データの準備を開始")
+    print("  - SimCSEトークン化を実行中...")
+    sub_ids_simcse = []
+    with tqdm(total=len(sentences), desc="SimCSEトークン化") as pbar:
+        for s in sentences:
+            sub_ids_simcse.append(simcse_tokenizer.encode(s, truncation=True, max_length=128))
+            pbar.update(1)
+            
+    topic_num = [(len(sentences), i) for i in range(len(sentences))]
+    
+    # データ保存
+    print("10. データの保存を開始")
+    data = {
+    # Coherenceモデル用（Tensorをlist化して軽量化）
+    "coheren_inputs": [t.cpu().tolist() for t in coheren_inputs],
+    "coheren_masks": [t.cpu().tolist() for t in coheren_masks],
+    "coheren_types": [t.cpu().tolist() for t in coheren_types],
+    
+    # Topicモデル用
+    "sub_ids_simcse": sub_ids_simcse,
+    "com_vecs": com_vecs,  # コメント平均ベクトル
+    "topic_num": topic_num,
+    "sentences": sentences,  # デバッグ用
+    # ★追加: 品詞分析結果も保存
+    "pos_analysis": pos_analysis
+ }
+
+    torch.save({
+    "coheren_inputs": coheren_inputs.cpu(),
+    "coheren_masks": coheren_masks.cpu(),
+    "coheren_types": coheren_types.cpu(),
+    "sub_ids_simcse": sub_ids_simcse,
+    "com_vecs": [v.cpu() for v in com_vecs],
+    "topic_num": topic_num,
+    "sentences": sentences,
+    # ★追加: 品詞分析結果も保存
+    "pos_analysis": pos_analysis
+    }, save_path)
+
+    print(f"保存完了（torch形式）: {save_path}")
+    print(f"Coherenceデータ数: {len(coheren_inputs)}")
+    print(f"Topicデータ数: {len(sentences)}")
+    print("=== 前処理が完了しました ===")
+
+
+# メイン処理
+if __name__ == "__main__":
+    print("プログラムを開始します")
+    
+    # 複数の動画URLをリストで指定
+    video_urls = [
+        "https://www.youtube.com/watch?v=RnG_iJ55evs",
+        "https://www.youtube.com/watch?v=j96CiYjKpXk",
+    ]
+    
+    for i, video_url in enumerate(video_urls):
+        print(f"\n=== {i+1}/{len(video_urls)} 番目の動画を処理中 ===")
+        save_path = f"/content/output_{i+1}.pt"  
+        csv_save_path = f"/content/transcript_{i+1}.csv"
+        
+        preprocess_and_save_with_csv(
+            video_url, 
+            save_path, 
+            csv_save_path, 
+            history=2, 
+            window_size=10, 
+            debug_nsp=True, 
+            enable_comments=False,  # コメント取得を無効化
+            comment_window_start_offset=10,  # 字幕開始+10秒
+            comment_window_end_offset=15     # 字幕開始+15秒
+        )
+    
+    print("全ての動画処理が正常に終了しました")
+--- ./src/evaluation/__init__.py ---
+
+--- ./src/evaluation/detector.py ---
+"""
+境界検出モジュール
+深度スコアから境界を検出
+"""
+import numpy as np
+from typing import List, Tuple, Dict
+
+
+class BoundaryDetector:
+    """
+    境界検出アルゴリズム
+    """
+    
+    @staticmethod
+    def detect_adaptive(
+        depth_scores: List[float],
+        threshold_multiplier: float = 0.5
+    ) -> List[int]:
+        """
+        適応的閾値による境界検出
+        
+        Args:
+            depth_scores: 深度スコアのリスト
+            threshold_multiplier: 閾値の乗数
+            
+        Returns:
+            境界インデックスのリスト
+        """
+        depth_scores = np.array(depth_scores)
+        
+        # 統計量を計算
+        mean_score = np.mean(depth_scores)
+        std_score = np.std(depth_scores)
+        
+        # 閾値を設定
+        threshold = mean_score + threshold_multiplier * std_score
+        
+        # 閾値を超えるインデックスを取得
+        boundaries = np.where(depth_scores > threshold)[0]
+        
+        return sorted(boundaries.tolist())
+    
+    @staticmethod
+    def detect_fixed(
+        depth_scores: List[float],
+        num_boundaries: int = None
+    ) -> List[int]:
+        """
+        固定数の境界検出
+        
+        Args:
+            depth_scores: 深度スコアのリスト
+            num_boundaries: 検出する境界数（Noneの場合は自動）
+            
+        Returns:
+            境界インデックスのリスト
+        """
+        depth_scores = np.array(depth_scores)
+        
+        # 境界数が指定されていない場合は自動計算
+        if num_boundaries is None:
+            num_boundaries = max(1, len(depth_scores) // 20)
+        
+        # スコアが高い上位N個を選択
+        boundaries = np.argsort(depth_scores)[-num_boundaries:]
+        
+        return sorted(boundaries.tolist())
+    
+    @staticmethod
+    def detect_threshold(
+        depth_scores: List[float],
+        threshold: float = 0.5
+    ) -> List[int]:
+        """
+        固定閾値による境界検出
+        
+        Args:
+            depth_scores: 深度スコアのリスト
+            threshold: 閾値
+            
+        Returns:
+            境界インデックスのリスト
+        """
+        depth_scores = np.array(depth_scores)
+        
+        # 閾値を超えるインデックスを取得
+        boundaries = np.where(depth_scores > threshold)[0]
+        
+        return sorted(boundaries.tolist())
+    
+    @staticmethod
+    def detect(
+        depth_scores: List[float],
+        method: str = 'adaptive',
+        **kwargs
+    ) -> List[int]:
+        """
+        指定された方法で境界検出
+        
+        Args:
+            depth_scores: 深度スコアのリスト
+            method: 検出方法 ('adaptive', 'fixed', 'threshold')
+            **kwargs: 各メソッドの追加パラメータ
+            
+        Returns:
+            境界インデックスのリスト
+        """
+        if method == 'adaptive':
+            return BoundaryDetector.detect_adaptive(depth_scores, **kwargs)
+        elif method == 'fixed':
+            return BoundaryDetector.detect_fixed(depth_scores, **kwargs)
+        elif method == 'threshold':
+            return BoundaryDetector.detect_threshold(depth_scores, **kwargs)
+        else:
+            raise ValueError(f"Unknown detection method: {method}")
+    
+    @staticmethod
+    def boundaries_to_labels(
+        boundaries: List[int],
+        total_length: int
+    ) -> List[int]:
+        """
+        境界インデックスを0/1ラベルに変換
+        
+        Args:
+            boundaries: 境界インデックスのリスト
+            total_length: 総長さ
+            
+        Returns:
+            0/1ラベルのリスト
+        """
+        labels = [0] * total_length
+        for b in boundaries:
+            if 0 <= b < total_length:
+                labels[b] = 1
+        return labels
+
+
+class MultimethodBoundaryDetector:
+    """
+    複数の方法で境界検出を試し、最良の結果を選択
+    """
+    
+    def __init__(self, methods: List[str] = None):
+        """
+        Args:
+            methods: 試行する検出方法のリスト
+        """
+        self.methods = methods or ['adaptive', 'fixed', 'threshold']
+        self.detector = BoundaryDetector()
+    
+    def detect_best(
+        self,
+        depth_scores: List[float],
+        gold_boundaries: List[int],
+        metric_fn
+    ) -> Tuple[List[int], str, float, Dict]:
+        """
+        複数の方法を試して最良の結果を返す
+        
+        Args:
+            depth_scores: 深度スコアのリスト
+            gold_boundaries: 正解境界（評価用）
+            metric_fn: 評価関数（predicted, gold -> score）
+            
+        Returns:
+            (best_boundaries, best_method, best_score, all_results)
+        """
+        best_score = float('inf')
+        best_boundaries = []
+        best_method = None
+        all_results = {}
+        
+        for method in self.methods:
+            # 境界を検出
+            boundaries = self.detector.detect(depth_scores, method=method)
+            
+            # ラベルに変換
+            predicted_labels = self.detector.boundaries_to_labels(
+                boundaries, len(gold_boundaries)
+            )
+            
+            # 評価
+            score = metric_fn(predicted_labels, gold_boundaries)
+            
+            # 結果を保存
+            all_results[method] = {
+                'boundaries': boundaries,
+                'score': score,
+                'num_boundaries': len(boundaries)
+            }
+            
+            # 最良スコアを更新
+            if score < best_score:
+                best_score = score
+                best_boundaries = boundaries
+                best_method = method
+        
+        return best_boundaries, best_method, best_score, all_results
+--- ./src/evaluation/metrics.py ---
+"""
+評価指標モジュール
+各種評価メトリクスの計算
+"""
+import numpy as np
+import segeval
+from typing import List, Dict, Tuple
+
+
+class MetricsCalculator:
+    """
+    評価指標を計算するクラス
+    """
+    
+    @staticmethod
+    def calculate_pk(
+        predicted_boundaries: List[int],
+        gold_boundaries: List[int],
+        window_size: int = None
+    ) -> float:
+        """
+        Pkスコアを計算
+        
+        Args:
+            predicted_boundaries: 予測境界
+            gold_boundaries: 正解境界
+            window_size: ウィンドウサイズ（Noneの場合は自動計算）
+            
+        Returns:
+            Pkスコア
+        """
+        # セグメント表現に変換
+        seg_pred = MetricsCalculator._boundaries_to_segments(predicted_boundaries)
+        seg_gold = MetricsCalculator._boundaries_to_segments(gold_boundaries)
+        
+        # Pkスコアを計算
+        pk = segeval.pk(seg_pred, seg_gold, window_size=window_size)
+        
+        return float(pk)
+    
+    @staticmethod
+    def calculate_window_diff(
+        predicted_boundaries: List[int],
+        gold_boundaries: List[int],
+        window_size: int = None
+    ) -> float:
+        """
+        WindowDiffスコアを計算
+        
+        Args:
+            predicted_boundaries: 予測境界
+            gold_boundaries: 正解境界
+            window_size: ウィンドウサイズ
+            
+        Returns:
+            WindowDiffスコア
+        """
+        # セグメント表現に変換
+        seg_pred = MetricsCalculator._boundaries_to_segments(predicted_boundaries)
+        seg_gold = MetricsCalculator._boundaries_to_segments(gold_boundaries)
+        
+        # WindowDiffスコアを計算
+        wd = segeval.window_diff(seg_pred, seg_gold, window_size=window_size)
+        
+        return float(wd)
+    
+    @staticmethod
+    def calculate_precision_recall_f1(
+        predicted_boundaries: List[int],
+        gold_boundaries: List[int]
+    ) -> Dict[str, float]:
+        """
+        適合率、再現率、F1スコアを計算
+        
+        Args:
+            predicted_boundaries: 予測境界
+            gold_boundaries: 正解境界
+            
+        Returns:
+            {'precision', 'recall', 'f1', 'correct', 'false_positive', 'false_negative'}
+        """
+        correct_detections = 0
+        false_positives = 0
+        false_negatives = 0
+        
+        for pred, gold in zip(predicted_boundaries, gold_boundaries):
+            if pred == 1 and gold == 1:
+                correct_detections += 1
+            elif pred == 1 and gold == 0:
+                false_positives += 1
+            elif pred == 0 and gold == 1:
+                false_negatives += 1
+        
+        # 適合率
+        precision = correct_detections / sum(predicted_boundaries) \
+            if sum(predicted_boundaries) > 0 else 0.0
+        
+        # 再現率
+        recall = correct_detections / sum(gold_boundaries) \
+            if sum(gold_boundaries) > 0 else 0.0
+        
+        # F1スコア
+        f1 = 2 * precision * recall / (precision + recall) \
+            if (precision + recall) > 0 else 0.0
+        
+        return {
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f1),
+            'correct_detections': correct_detections,
+            'false_positives': false_positives,
+            'false_negatives': false_negatives
+        }
+    
+    @staticmethod
+    def _boundaries_to_segments(boundaries: List[int]) -> List[int]:
+        """
+        境界リストをセグメント長のリストに変換
+        
+        Args:
+            boundaries: 境界リスト（0 or 1）
+            
+        Returns:
+            セグメント長のリスト
+        """
+        segments = []
+        tmp = 0
+        
+        for b in boundaries:
+            tmp += 1
+            if b == 1:
+                segments.append(tmp)
+                tmp = 0
+        
+        # 最後のセグメント
+        if tmp > 0:
+            segments.append(tmp)
+        
+        return segments
+    
+    @staticmethod
+    def calculate_all_metrics(
+        predicted_boundaries: List[int],
+        gold_boundaries: List[int]
+    ) -> Dict[str, float]:
+        """
+        全ての評価指標を計算
+        
+        Args:
+            predicted_boundaries: 予測境界
+            gold_boundaries: 正解境界
+            
+        Returns:
+            全メトリクスの辞書
+        """
+        # ウィンドウサイズを計算
+        seg_gold = MetricsCalculator._boundaries_to_segments(gold_boundaries)
+        avg_segment_length = np.mean(seg_gold)
+        window_size = int(avg_segment_length / 2)
+        
+        # 各メトリクスを計算
+        pk = MetricsCalculator.calculate_pk(
+            predicted_boundaries, gold_boundaries, window_size
+        )
+        wd = MetricsCalculator.calculate_window_diff(
+            predicted_boundaries, gold_boundaries, window_size
+        )
+        prf_metrics = MetricsCalculator.calculate_precision_recall_f1(
+            predicted_boundaries, gold_boundaries
+        )
+        
+        return {
+            'Pk': pk,
+            'WindowDiff': wd,
+            'window_size': window_size,
+            **prf_metrics
+        }
+
+
+class RandomBaselineEvaluator:
+    """
+    ランダムベースラインの評価
+    """
+    
+    @staticmethod
+    def evaluate(
+        gold_boundaries: List[int],
+        num_trials: int = 100
+    ) -> Dict[str, float]:
+        """
+        ランダム境界検出を評価
+        
+        Args:
+            gold_boundaries: 正解境界
+            num_trials: 試行回数
+            
+        Returns:
+            統計情報
+        """
+        num_sentences = len(gold_boundaries)
+        num_true_boundaries = sum(gold_boundaries)
+        
+        pk_scores = []
+        wd_scores = []
+        
+        for _ in range(num_trials):
+            # ランダムに境界を選択
+            random_boundaries = np.random.choice(
+                num_sentences,
+                size=num_true_boundaries,
+                replace=False
+            )
+            random_boundaries = sorted(random_boundaries)
+            
+            # 境界リストを作成
+            predicted = [0] * num_sentences
+            for b in random_boundaries:
+                predicted[b] = 1
+            
+            # メトリクスを計算
+            pk = MetricsCalculator.calculate_pk(predicted, gold_boundaries)
+            wd = MetricsCalculator.calculate_window_diff(predicted, gold_boundaries)
+            
+            pk_scores.append(pk)
+            wd_scores.append(wd)
+        
+        return {
+            'pk_mean': float(np.mean(pk_scores)),
+            'pk_std': float(np.std(pk_scores)),
+            'wd_mean': float(np.mean(wd_scores)),
+            'wd_std': float(np.std(wd_scores)),
+            'num_trials': num_trials
+        }
+--- ./src/evaluation/visualizer.py ---
+"""
+可視化モジュール
+結果の可視化とグラフ生成
+"""
+import matplotlib.pyplot as plt
+import numpy as np
+from typing import List, Dict
+import os
+
+
+class ResultVisualizer:
+    """
+    結果を可視化するクラス
+    """
+    
+    def __init__(self, save_dir: str = "./results"):
+        """
+        Args:
+            save_dir: 保存ディレクトリ
+        """
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+    
+    def create_score_histograms(
+        self,
+        result: Dict,
+        filename: str = "score_histograms.png"
+    ):
+        """
+        各種スコアのヒストグラムを作成
+        
+        Args:
+            result: 結果の辞書
+            filename: 保存ファイル名
+        """
+        debug_scores = result.get('debug_scores', {})
+        
+        # ヒストグラム用データの準備
+        hist_data = {}
+        
+        # 各種スコアを収集
+        if 'coherence_raw_scores' in debug_scores and debug_scores['coherence_raw_scores']:
+            hist_data['Coherence Raw Scores'] = debug_scores['coherence_raw_scores']
+        
+        if 'topic_raw_scores' in debug_scores and debug_scores['topic_raw_scores']:
+            hist_data['Topic Raw Scores'] = debug_scores['topic_raw_scores']
+        
+        if 'raw_scores' in result and result['raw_scores']:
+            hist_data['Final Sigmoid Scores'] = result['raw_scores']
+        
+        if 'depth_scores' in result and result['depth_scores']:
+            hist_data['Depth Scores'] = result['depth_scores']
+        
+        if not hist_data:
+            print("⚠️ ヒストグラム用のスコアデータが見つかりません")
+            return
+        
+        # ヒストグラムの作成
+        num_plots = len(hist_data)
+        fig, axes = plt.subplots(
+            (num_plots + 2) // 3, 3,
+            figsize=(18, 4 * ((num_plots + 2) // 3))
+        )
+        
+        # 1次元配列に変換
+        if num_plots <= 3:
+            axes = axes.reshape(1, -1) if num_plots > 1 else np.array([[axes]])
+        
+        colors = ['blue', 'green', 'red', 'purple', 'orange', 'brown']
+        
+        for idx, (title, scores) in enumerate(hist_data.items()):
+            row = idx // 3
+            col = idx % 3
+            
+            ax = axes[row, col] if num_plots > 3 else axes[0, col] if num_plots > 1 else axes[0, 0]
+            
+            # ヒストグラムの描画
+            ax.hist(scores, bins=30, alpha=0.7,
+                   color=colors[idx % len(colors)], edgecolor='black')
+            
+            # 統計情報
+            mean_val = np.mean(scores)
+            std_val = np.std(scores)
+            median_val = np.median(scores)
+            
+            # タイトルと統計情報
+            ax.set_title(f"{title}\nMean={mean_val:.3f}, Std={std_val:.3f}")
+            ax.set_xlabel('Score')
+            ax.set_ylabel('Frequency')
+            ax.axvline(mean_val, color='red', linestyle='--', label='Mean')
+            ax.axvline(median_val, color='green', linestyle='--', label='Median')
+            ax.legend()
+            ax.grid(alpha=0.3)
+        
+        # 未使用のサブプロットを非表示
+        for idx in range(num_plots, (num_plots + 2) // 3 * 3):
+            row = idx // 3
+            col = idx % 3
+            if num_plots > 3:
+                axes[row, col].set_visible(False)
+            elif num_plots > 1:
+                axes[0, col].set_visible(False)
+        
+        plt.tight_layout()
+        save_path = os.path.join(self.save_dir, filename)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"✅ ヒストグラムを保存: {save_path}")
+    
+    def visualize_boundary_detection(
+        self,
+        sentences: List[str],
+        depth_scores: List[float],
+        predicted_boundaries: List[int],
+        gold_boundaries: List[int],
+        filename: str = "boundary_visualization.png"
+    ):
+        """
+        境界検出結果を可視化
+        
+        Args:
+            sentences: 発話のリスト
+            depth_scores: 深度スコア
+            predicted_boundaries: 予測境界
+            gold_boundaries: 正解境界
+            filename: 保存ファイル名
+        """
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 8))
+        
+        # 深度スコアのプロット
+        x = np.arange(len(depth_scores))
+        ax1.plot(x, depth_scores, 'b-', linewidth=2, label='Depth Score')
+        ax1.set_xlabel('Sentence Index')
+        ax1.set_ylabel('Depth Score')
+        ax1.set_title('Depth Scores')
+        ax1.grid(alpha=0.3)
+        ax1.legend()
+        
+        # 境界の可視化
+        ax2.scatter(x, [1] * len(x), c='lightgray', s=100, alpha=0.5, label='Sentences')
+        
+        # 予測境界
+        pred_indices = [i for i, b in enumerate(predicted_boundaries) if b == 1]
+        if pred_indices:
+            ax2.scatter(pred_indices, [1] * len(pred_indices),
+                       c='red', s=200, marker='v', label='Predicted', alpha=0.7)
+        
+        # 正解境界
+        gold_indices = [i for i, b in enumerate(gold_boundaries) if b == 1]
+        if gold_indices:
+            ax2.scatter(gold_indices, [0.5] * len(gold_indices),
+                       c='green', s=200, marker='^', label='Gold', alpha=0.7)
+        
+        ax2.set_xlabel('Sentence Index')
+        ax2.set_yticks([0.5, 1])
+        ax2.set_yticklabels(['Gold', 'Predicted'])
+        ax2.set_title('Boundary Detection Results')
+        ax2.legend()
+        ax2.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        save_path = os.path.join(self.save_dir, filename)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"✅ 境界検出結果を保存: {save_path}")
+    
+    def plot_score_comparison(
+        self,
+        coherence_scores: List[float],
+        topic_scores: List[float],
+        combined_scores: List[float],
+        filename: str = "score_comparison.png"
+    ):
+        """
+        各種スコアの比較プロット
+        
+        Args:
+            coherence_scores: コヒーレンススコア
+            topic_scores: トピックスコア
+            combined_scores: 結合スコア
+            filename: 保存ファイル名
+        """
+        fig, ax = plt.subplots(figsize=(15, 6))
+        
+        x = np.arange(len(coherence_scores))
+        
+        ax.plot(x, coherence_scores, 'b-', label='Coherence', linewidth=2, alpha=0.7)
+        ax.plot(x, topic_scores, 'g-', label='Topic', linewidth=2, alpha=0.7)
+        ax.plot(x, combined_scores, 'r-', label='Combined', linewidth=2, alpha=0.7)
+        
+        ax.set_xlabel('Sentence Boundary Index')
+        ax.set_ylabel('Score')
+        ax.set_title('Score Comparison')
+        ax.legend()
+        ax.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        save_path = os.path.join(self.save_dir, filename)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"✅ スコア比較を保存: {save_path}")
+
+
+def save_results_to_csv(result: Dict, save_dir: str, filename: str = "boundary_results.csv"):
+    """
+    境界推定結果をCSVに保存
+    
+    Args:
+        result: 結果の辞書
+        save_dir: 保存ディレクトリ
+        filename: ファイル名
+    """
+    import csv
+    
+    os.makedirs(save_dir, exist_ok=True)
+    csv_path = os.path.join(save_dir, filename)
+    
+    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        
+        # ヘッダー行
+        writer.writerow([
+            'sentence_index',
+            'sentence',
+            'raw_score',
+            'depth_score',
+            'predicted_boundary',
+            'gold_boundary',
+            'is_correct'
+        ])
+        
+        # データ行
+        for i, (sentence, raw_score, depth_score, pred, gold) in enumerate(zip(
+            result['sentences'],
+            result['raw_scores'],
+            result['depth_scores'],
+            result['predicted_boundaries'],
+            result['gold_boundaries']
+        )):
+            is_correct = "正解" if pred == gold else "不正解"
+            writer.writerow([
+                i,
+                sentence,
+                f"{raw_score:.6f}",
+                f"{depth_score:.6f}",
+                pred,
+                gold,
+                is_correct
+            ])
+    
+    print(f"✅ 境界推定結果をCSVに保存: {csv_path}")
+--- ./src/models/__init__.py ---
+
+--- ./src/models/architecture.py ---
+"""
+モデルアーキテクチャモジュール
+BERTベースのセグメンテーションモデルの定義
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from transformers import BertForNextSentencePrediction, AutoModel
+from transformers.models.bert.modeling_bert import (
+    BertPreTrainedModel, BertModel, BertOnlyNSPHead
+)
+from transformers.modeling_outputs import NextSentencePredictorOutput
+from torch.nn import CrossEntropyLoss
+from typing import Optional, Tuple
+
+
+class AverageFusionLayer(nn.Module):
+    """
+    推論専用: 発話ベクトルとコメントベクトルの単純平均を取る層
+    """
+    
+    def __init__(self):
+        super().__init__()
+        # 学習パラメータなし
+    
+    def forward(self, utterance_vec: torch.Tensor, comment_vec: torch.Tensor) -> torch.Tensor:
+        """
+        発話ベクトルとコメントベクトルの要素ごとの平均を計算
+        
+        Args:
+            utterance_vec: (batch_size, hidden_dim) 発話ベクトル
+            comment_vec: (batch_size, hidden_dim) コメントベクトル
+            
+        Returns:
+            fused: (batch_size, hidden_dim) 平均化されたベクトル
+        """
+        fused = (utterance_vec + comment_vec) / 2.0
+        return fused
+
+
+class SegmentationModel(nn.Module):
+    """
+    セグメンテーションモデルのアーキテクチャ
+    CoherenceモデルとTopicモデルを統合
+    """
+    
+    def __init__(
+        self,
+        coherence_model_name: str = "cl-tohoku/bert-base-japanese",
+        topic_model_name: str = "pkshatech/simcse-ja-bert-base-clcmlp",
+        use_comments_for_topic: bool = False,
+        fusion_method: str = 'average'
+    ):
+        """
+        Args:
+            coherence_model_name: Coherenceモデル名
+            topic_model_name: Topicモデル名
+            use_comments_for_topic: 推論時にコメントを使用するか
+            fusion_method: 融合方法 ('average' or 'linear')
+        """
+        super().__init__()
+        
+        self.coherence_model_name = coherence_model_name
+        self.topic_model_name = topic_model_name
+        self.use_comments_for_topic = use_comments_for_topic
+        self.fusion_method = fusion_method
+        
+        # モデルのロード
+        self._load_models()
+        
+        # 推論専用の融合層
+        if use_comments_for_topic and fusion_method == 'average':
+            self.comment_fusion = AverageFusionLayer()
+        else:
+            self.comment_fusion = None
+    
+    def _load_models(self):
+        """モデルをロード"""
+        try:
+            # Topicモデル
+            self.topic_model = AutoModel.from_pretrained(self.topic_model_name)
+            
+            # Coherenceモデル (Next Sentence Prediction対応)
+            self.coherence_model = BertForNextSentencePrediction.from_pretrained(
+                self.coherence_model_name,
+                num_labels=2,
+                output_attentions=False,
+                output_hidden_states=True
+            )
+            
+            print(f"✅ モデルロード成功: Coherence={self.coherence_model_name}, Topic={self.topic_model_name}")
+            
+        except Exception as e:
+            print(f"❌ モデルロードエラー: {e}")
+            # フォールバック
+            print("デフォルトモデルでフォールバック")
+            self.topic_model = AutoModel.from_pretrained("pkshatech/simcse-ja-bert-base-clcmlp")
+            self.coherence_model = BertForNextSentencePrediction.from_pretrained(
+                "cl-tohoku/bert-base-japanese",
+                num_labels=2,
+                output_attentions=False,
+                output_hidden_states=True
+            )
+    
+    def encode_topic(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Topicモデルで発話をエンコード
+        
+        Args:
+            input_ids: (batch_size, seq_len)
+            attention_mask: (batch_size, seq_len)
+            
+        Returns:
+            encoded: (batch_size, hidden_dim) [CLS]トークンの表現
+        """
+        outputs = self.topic_model(
+            input_ids=input_ids,
+            attention_mask=attention_mask
+        )
+        return outputs.last_hidden_state[:, 0, :]
+    
+    def encode_coherence(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        token_type_ids: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Coherenceモデルでスコアを計算
+        
+        Args:
+            input_ids: (batch_size, seq_len)
+            attention_mask: (batch_size, seq_len)
+            token_type_ids: (batch_size, seq_len)
+            
+        Returns:
+            scores: (batch_size, 2) NSPスコア
+            features: pooled output
+        """
+        scores, features = self.coherence_model(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids
+        )
+        return scores, features
+    
+    def fuse_vectors(
+        self,
+        utterance_vec: torch.Tensor,
+        comment_vec: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        発話ベクトルとコメントベクトルを融合
+        
+        Args:
+            utterance_vec: (batch_size, hidden_dim)
+            comment_vec: (batch_size, hidden_dim) or None
+            
+        Returns:
+            fused: (batch_size, hidden_dim)
+        """
+        if comment_vec is None or self.comment_fusion is None:
+            return utterance_vec
+        
+        return self.comment_fusion(utterance_vec, comment_vec)
+    
+    def compute_topic_similarity(
+        self,
+        context_vec: torch.Tensor,
+        target_vec: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        コサイン類似度を計算
+        
+        Args:
+            context_vec: (batch_size, hidden_dim)
+            target_vec: (batch_size, hidden_dim)
+            
+        Returns:
+            similarity: (batch_size,)
+        """
+        return F.cosine_similarity(context_vec, target_vec, dim=1, eps=1e-08)
+
+
+class CustomBertForNSP(BertPreTrainedModel):
+    """
+    カスタムBERT NSPモデル
+    隠れ層とpooled outputの両方を返す
+    """
+    
+    def __init__(self, config):
+        super().__init__(config)
+        self.bert = BertModel(config)
+        self.cls = BertOnlyNSPHead(config)
+        self.post_init()
+    
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        return_feature: bool = False,
+        **kwargs,
+    ):
+        """
+        フォワードパス
+        
+        Returns:
+            (NextSentencePredictorOutput, pooled_output)
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        
+        pooled_output = outputs[1]
+        seq_relationship_scores = self.cls(pooled_output)
+        
+        next_sentence_loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            next_sentence_loss = loss_fct(
+                seq_relationship_scores.view(-1, 2),
+                labels.view(-1)
+            )
+        
+        if not return_dict:
+            output = (seq_relationship_scores,) + outputs[2:]
+            return ((next_sentence_loss,) + output) if next_sentence_loss is not None else output
+        
+        return NextSentencePredictorOutput(
+            loss=next_sentence_loss,
+            logits=seq_relationship_scores,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        ), pooled_output
+--- ./src/models/inference.py ---
+"""
+推論ロジックモジュール
+モデルの推論処理を管理
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Dict, List, Optional, Tuple
+import numpy as np
+
+from models.architecture import SegmentationModel
+from utils.depth_score import DepthScoreCalculator
+
+
+class InferenceWrapper:
+    """
+    推論処理を管理するラッパークラス
+    """
+    
+    def __init__(
+        self,
+        model: SegmentationModel,
+        use_comments: bool = True,
+        fusion_method: str = 'average'
+    ):
+        """
+        Args:
+            model: セグメンテーションモデル
+            use_comments: コメントを使用するか
+            fusion_method: 融合方法
+        """
+        self.model = model
+        self.use_comments = use_comments
+        self.fusion_method = fusion_method
+        self.depth_calculator = DepthScoreCalculator()
+        
+        # 評価モードに設定
+        self.model.eval()
+    
+    @torch.no_grad()
+    def predict_scores(
+        self,
+        sentences: List[str],
+        tokenizer,
+        comments: Optional[List[Dict]] = None,
+        device: torch.device = torch.device('cuda')
+    ) -> Tuple[List[float], Dict]:
+        """
+        境界スコアを予測
+        
+        Args:
+            sentences: 発話のリスト
+            tokenizer: トークナイザー
+            comments: コメントデータ（オプション）
+            device: デバイス
+            
+        Returns:
+            (scores, debug_info)のタプル
+        """
+        num_sentences = len(sentences)
+        
+        # Coherenceスコア計算
+        coherence_scores = self._compute_coherence_scores(
+            sentences, tokenizer, device
+        )
+        
+        # Topicスコア計算
+        topic_scores, topic_debug = self._compute_topic_scores(
+            sentences, tokenizer, comments, device
+        )
+        
+        # スコアの結合
+        final_scores = []
+        for i in range(len(coherence_scores)):
+            if i < len(topic_scores):
+                combined = coherence_scores[i] + topic_scores[i]
+            else:
+                combined = coherence_scores[i]
+            final_scores.append(combined)
+        
+        # デバッグ情報
+        debug_info = {
+            'coherence_raw_scores': coherence_scores,
+            'topic_raw_scores': topic_scores,
+            **topic_debug
+        }
+        
+        return final_scores, debug_info
+    
+    def _compute_coherence_scores(
+        self,
+        sentences: List[str],
+        tokenizer,
+        device: torch.device
+    ) -> List[float]:
+        """
+        Coherenceスコアを計算
+        
+        Args:
+            sentences: 発話のリスト
+            tokenizer: トークナイザー
+            device: デバイス
+            
+        Returns:
+            Coherenceスコアのリスト
+        """
+        coherence_scores = []
+        
+        for i in range(len(sentences) - 1):
+            # 隣接する発話をペアにする
+            sentence_a = sentences[i]
+            sentence_b = sentences[i + 1]
+            
+            # トークン化
+            encoded = tokenizer(
+                sentence_a,
+                sentence_b,
+                padding='max_length',
+                truncation=True,
+                max_length=512,
+                return_tensors='pt'
+            )
+            
+            # デバイスに転送
+            input_ids = encoded['input_ids'].to(device)
+            attention_mask = encoded['attention_mask'].to(device)
+            token_type_ids = encoded['token_type_ids'].to(device)
+            
+            # Coherenceスコア取得
+            scores, _ = self.model.encode_coherence(
+                input_ids, attention_mask, token_type_ids
+            )
+            
+            # Softmaxを適用して確率に変換
+            probs = F.softmax(scores, dim=1)
+            coherence_score = probs[0, 0].item()  # "is next"の確率
+            
+            coherence_scores.append(coherence_score)
+        
+        return coherence_scores
+    
+    def _compute_topic_scores(
+        self,
+        sentences: List[str],
+        tokenizer,
+        comments: Optional[List[Dict]],
+        device: torch.device
+    ) -> Tuple[List[float], Dict]:
+        """
+        Topicスコアを計算
+        
+        Args:
+            sentences: 発話のリスト
+            tokenizer: トークナイザー
+            comments: コメントデータ（オプション）
+            device: デバイス
+            
+        Returns:
+            (topic_scores, debug_info)
+        """
+        # 発話をエンコード
+        utterance_embeddings = self._encode_utterances(
+            sentences, tokenizer, device
+        )
+        
+        # コメントを使用する場合
+        if self.use_comments and comments is not None:
+            comment_embeddings = self._encode_comments(
+                sentences, comments, tokenizer, device
+            )
+            # 融合
+            fused_embeddings = []
+            for utt_emb, com_emb in zip(utterance_embeddings, comment_embeddings):
+                fused = self.model.fuse_vectors(utt_emb.unsqueeze(0), com_emb.unsqueeze(0))
+                fused_embeddings.append(fused.squeeze(0))
+        else:
+            fused_embeddings = utterance_embeddings
+        
+        # トピックスコア計算
+        topic_scores = []
+        for i in range(1, len(fused_embeddings)):
+            # 前後のコンテキストを平均
+            context_start = max(0, i - 2)
+            context_vec = torch.mean(
+                torch.stack(fused_embeddings[context_start:i]), dim=0
+            )
+            
+            current_end = min(len(fused_embeddings), i + 2)
+            current_vec = torch.mean(
+                torch.stack(fused_embeddings[i:current_end]), dim=0
+            )
+            
+            # コサイン類似度
+            similarity = F.cosine_similarity(
+                context_vec.unsqueeze(0),
+                current_vec.unsqueeze(0),
+                dim=1
+            ).item()
+            
+            topic_scores.append(similarity)
+        
+        debug_info = {
+            'num_utterances': len(utterance_embeddings),
+            'num_comments': len(comment_embeddings) if comments else 0,
+            'used_fusion': self.use_comments and comments is not None
+        }
+        
+        return topic_scores, debug_info
+    
+    def _encode_utterances(
+        self,
+        sentences: List[str],
+        tokenizer,
+        device: torch.device
+    ) -> List[torch.Tensor]:
+        """
+        発話をエンコード
+        
+        Args:
+            sentences: 発話のリスト
+            tokenizer: トークナイザー
+            device: デバイス
+            
+        Returns:
+            埋め込みベクトルのリスト
+        """
+        embeddings = []
+        
+        for sentence in sentences:
+            encoded = tokenizer(
+                sentence,
+                padding='max_length',
+                truncation=True,
+                max_length=512,
+                return_tensors='pt'
+            )
+            
+            input_ids = encoded['input_ids'].to(device)
+            attention_mask = encoded['attention_mask'].to(device)
+            
+            embedding = self.model.encode_topic(input_ids, attention_mask)
+            embeddings.append(embedding.squeeze(0))
+        
+        return embeddings
+    
+    def _encode_comments(
+        self,
+        sentences: List[str],
+        comments: List[Dict],
+        tokenizer,
+        device: torch.device
+    ) -> List[torch.Tensor]:
+        """
+        コメントをエンコード
+        
+        Args:
+            sentences: 発話のリスト
+            comments: コメントデータ
+            tokenizer: トークナイザー
+            device: デバイス
+            
+        Returns:
+            コメント埋め込みのリスト
+        """
+        # TODO: コメントの実際のエンコーディングロジックを実装
+        # 仮実装: ゼロベクトルを返す
+        embeddings = []
+        hidden_dim = 768  # BERTの隠れ層次元
+        
+        for _ in sentences:
+            # 実際にはコメントを処理してエンコード
+            embedding = torch.zeros(hidden_dim, device=device)
+            embeddings.append(embedding)
+        
+        return embeddings
+    
+    @torch.no_grad()
+    def compute_depth_scores(
+        self,
+        raw_scores: List[float]
+    ) -> Tuple[List[float], Dict]:
+        """
+        深度スコアを計算
+        
+        Args:
+            raw_scores: 生スコアのリスト
+            
+        Returns:
+            (depth_scores, statistics)
+        """
+        # Sigmoidを適用
+        sigmoid_scores = [1 / (1 + np.exp(-s)) for s in raw_scores]
+        
+        # 深度スコア計算
+        depth_scores = self.depth_calculator.calculate(sigmoid_scores)
+        
+        # 統計情報
+        statistics = {
+            'min': float(np.min(depth_scores)),
+            'max': float(np.max(depth_scores)),
+            'mean': float(np.mean(depth_scores)),
+            'std': float(np.std(depth_scores))
+        }
+        
+        return depth_scores, statistics
+--- ./src/models/training.py ---
+"""
+学習ロジックモジュール
+モデルの学習処理を管理
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
+import bisect
+import numpy as np
+from typing import Dict, Optional, Tuple
+
+from models.architecture import SegmentationModel
+from utils.losses import MarginRankingLoss
+from utils.depth_score import DepthScoreCalculator
+
+
+class TrainingWrapper(nn.Module):
+    """
+    学習処理を管理するラッパークラス
+    """
+    
+    def __init__(
+        self,
+        model: SegmentationModel,
+        margin: int = 1,
+        train_split: int = 5,
+        window_size: int = 5
+    ):
+        """
+        Args:
+            model: セグメンテーションモデル
+            margin: マージンランキング損失のマージン
+            train_split: 学習時の分割数
+            window_size: ウィンドウサイズ
+        """
+        super().__init__()
+        
+        self.model = model
+        self.margin = margin
+        self.train_split = train_split
+        self.window_size = window_size
+        
+        # 損失関数
+        self.topic_loss_fn = nn.CrossEntropyLoss()
+        self.score_loss_fn = MarginRankingLoss(margin)
+        self.depth_calculator = DepthScoreCalculator()
+    
+    def forward(
+        self,
+        input_data: Dict[str, torch.Tensor],
+        window_size: Optional[int] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        学習時のフォワードパス
+        
+        Args:
+            input_data: 入力データの辞書
+            window_size: ウィンドウサイズ（指定時のみ上書き）
+            
+        Returns:
+            (total_loss, margin_loss, topic_loss)のタプル
+        """
+        device = input_data['coheren_inputs'].device
+        
+        # Coherenceスコア計算
+        coheren_pos_scores, _ = self.model.encode_coherence(
+            input_data['coheren_inputs'][:, 0, :],
+            attention_mask=input_data['coheren_mask'][:, 0, :],
+            token_type_ids=input_data['coheren_type'][:, 0, :]
+        )
+        
+        coheren_neg_scores, _ = self.model.encode_coherence(
+            input_data['coheren_inputs'][:, 1, :],
+            attention_mask=input_data['coheren_mask'][:, 1, :],
+            token_type_ids=input_data['coheren_type'][:, 1, :]
+        )
+        
+        batch_size = len(input_data['topic_context_num'])
+        
+        # Topicベクトル計算（学習時はコメント不使用）
+        topic_context = self.model.encode_topic(
+            input_ids=input_data['topic_context'],
+            attention_mask=input_data['topic_context_mask']
+        )
+        
+        topic_pos = self.model.encode_topic(
+            input_ids=input_data['topic_pos'],
+            attention_mask=input_data['topic_pos_mask']
+        )
+        
+        topic_neg = self.model.encode_topic(
+            input_ids=input_data['topic_neg'],
+            attention_mask=input_data['topic_neg_mask']
+        )
+        
+        # トピック学習損失計算
+        topic_loss = self._compute_topic_loss(input_data, window_size or self.window_size)
+        
+        # 平均ベクトル計算
+        topic_context_mean, topic_pos_mean, topic_neg_mean = self._compute_mean_vectors(
+            topic_context, topic_pos, topic_neg,
+            input_data['topic_context_num'],
+            input_data['topic_pos_num'],
+            input_data['topic_neg_num'],
+            batch_size
+        )
+        
+        # コサイン類似度計算
+        topic_pos_scores = self.model.compute_topic_similarity(
+            topic_context_mean, topic_pos_mean
+        ).to(device)
+        
+        topic_neg_scores = self.model.compute_topic_similarity(
+            topic_context_mean, topic_neg_mean
+        ).to(device)
+        
+        # 総合スコア計算
+        coheren_pos_scores = F.softmax(coheren_pos_scores, dim=1)[:, 0]
+        coheren_neg_scores = F.softmax(coheren_neg_scores, dim=1)[:, 0]
+        
+        pos_scores = coheren_pos_scores + topic_pos_scores
+        neg_scores = coheren_neg_scores + topic_neg_scores
+        
+        # マージン損失
+        margin_loss = self.score_loss_fn(pos_scores, neg_scores)
+        
+        # 総合損失
+        total_loss = margin_loss + topic_loss
+        
+        return total_loss, margin_loss, topic_loss
+    
+    def _compute_mean_vectors(
+        self,
+        topic_context: torch.Tensor,
+        topic_pos: torch.Tensor,
+        topic_neg: torch.Tensor,
+        context_num: list,
+        pos_num: list,
+        neg_num: list,
+        batch_size: int
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        平均ベクトルを計算
+        
+        Returns:
+            (context_mean, pos_mean, neg_mean)
+        """
+        topic_context_mean, topic_pos_mean, topic_neg_mean = [], [], []
+        context_count, pos_count, neg_count = 0, 0, 0
+        
+        for i, j, z in zip(context_num, pos_num, neg_num):
+            topic_context_mean.append(
+                torch.mean(topic_context[context_count:context_count + i], dim=0)
+            )
+            topic_pos_mean.append(
+                torch.mean(topic_pos[pos_count:pos_count + j], dim=0)
+            )
+            topic_neg_mean.append(
+                torch.mean(topic_neg[neg_count:neg_count + z], dim=0)
+            )
+            context_count += i
+            pos_count += j
+            neg_count += z
+        
+        assert len(topic_context_mean) == len(topic_pos_mean) == len(topic_neg_mean) == batch_size
+        
+        context_mean = pad_sequence(topic_context_mean, batch_first=True)
+        pos_mean = pad_sequence(topic_pos_mean, batch_first=True)
+        neg_mean = pad_sequence(topic_neg_mean, batch_first=True)
+        
+        return context_mean, pos_mean, neg_mean
+    
+    def _compute_topic_loss(
+        self,
+        input_data: Dict[str, torch.Tensor],
+        window_size: int
+    ) -> torch.Tensor:
+        """
+        トピック損失を計算
+        
+        Args:
+            input_data: 入力データ
+            window_size: ウィンドウサイズ
+            
+        Returns:
+            topic_loss
+        """
+        device = input_data['topic_train'].device
+        topic_loss = torch.tensor(0.0, device=device)
+        margin_count = 0
+        
+        # バッチ内の各サンプルを処理
+        for dial_len, current_utt in input_data['topic_num']:
+            total_utterances = dial_len
+            
+            # ローカルウィンドウの範囲を決定
+            local_window_size = min(window_size, total_utterances - 1)
+            start_idx = max(0, current_utt - local_window_size)
+            end_idx = min(total_utterances, current_utt + local_window_size + 1)
+            
+            # 発話ベクトルを取得（学習時はコメント不使用）
+            local_topic_train = input_data['topic_train'][start_idx:end_idx]
+            local_mask = input_data['topic_train_mask'][start_idx:end_idx]
+            
+            local_fused = self.model.encode_topic(
+                input_ids=local_topic_train.to(device),
+                attention_mask=local_mask.to(device)
+            )
+            
+            # 疑似セグメンテーション処理
+            cur_loss = self._process_local_segmentation(
+                local_fused,
+                current_utt - start_idx,
+                end_idx - start_idx,
+                window_size,
+                device
+            )
+            
+            if cur_loss is not None:
+                topic_loss += cur_loss
+                margin_count += 1
+            
+            # メモリ解放
+            del local_fused
+        
+        return topic_loss / margin_count if margin_count > 0 else topic_loss
+    
+    def _process_local_segmentation(
+        self,
+        local_fused_embeddings: torch.Tensor,
+        local_current_idx: int,
+        local_dial_len: int,
+        global_window_size: int,
+        device: torch.device
+    ) -> Optional[torch.Tensor]:
+        """
+        ローカルウィンドウ内での疑似セグメンテーション処理
+        
+        Args:
+            local_fused_embeddings: ローカルウィンドウの埋め込み
+            local_current_idx: 現在位置のローカルインデックス
+            local_dial_len: ローカルウィンドウの長さ
+            global_window_size: グローバルウィンドウサイズ
+            device: デバイス
+            
+        Returns:
+            損失値 or None
+        """
+        if local_dial_len <= 1:
+            return None
+        
+        # トピックスコア計算
+        top_cons, top_curs = [], []
+        for i in range(1, local_dial_len):
+            top_con = torch.mean(local_fused_embeddings[max(0, i-2): i], dim=0)
+            top_cur = torch.mean(local_fused_embeddings[i: min(local_dial_len, i+2)], dim=0)
+            top_cons.append(top_con)
+            top_curs.append(top_cur)
+        
+        if not top_cons:
+            return None
+        
+        top_cons = torch.stack(top_cons)
+        top_curs = torch.stack(top_curs)
+        topic_scores = F.cosine_similarity(top_cons, top_curs, dim=1, eps=1e-08).to(device)
+        
+        # 深度スコア計算
+        raw_depth_scores = self.depth_calculator.calculate(torch.sigmoid(topic_scores))
+        
+        # Z-score正規化
+        depth_scores_tensor = torch.stack([torch.tensor(s, device=device) for s in raw_depth_scores])
+        local_mean = depth_scores_tensor.mean()
+        local_std = depth_scores_tensor.std()
+        
+        if local_std > 1e-8:
+            normalized_depth_scores = (depth_scores_tensor - local_mean) / local_std
+        else:
+            normalized_depth_scores = depth_scores_tensor - local_mean
+        
+        # セグメント検出
+        depth_scores_np = normalized_depth_scores.cpu().detach().numpy()
+        tet_seg = np.argsort(depth_scores_np)[-self.train_split:] + 1
+        tet_seg = [0] + tet_seg.tolist() + [local_dial_len]
+        tet_seg.sort()
+        
+        # 現在位置を含むセグメントを特定
+        tet_mid = bisect.bisect(tet_seg, local_current_idx)
+        if tet_mid >= len(tet_seg):
+            tet_mid = len(tet_seg) - 1
+        tet_mid_seg = (tet_seg[tet_mid-1], tet_seg[tet_mid])
+        
+        # マージン損失の計算
+        pos_left = max(tet_mid_seg[0], local_current_idx - global_window_size)
+        pos_right = min(tet_mid_seg[1], local_current_idx + global_window_size + 1)
+        
+        neg_left = min(tet_seg[max(0, tet_mid-1)], local_current_idx - global_window_size)
+        neg_right = max(tet_seg[tet_mid], local_current_idx + global_window_size + 1)
+        
+        # アンカー
+        anchor = local_fused_embeddings[local_current_idx].unsqueeze(0)
+        
+        # ポジティブサンプル
+        pos_indices = list(range(pos_left, local_current_idx)) + \
+                     list(range(local_current_idx + 1, pos_right))
+        if not pos_indices:
+            return None
+        
+        pos_embeddings = local_fused_embeddings[pos_indices]
+        pos_scores = F.cosine_similarity(anchor, pos_embeddings, dim=1)
+        
+        # ネガティブサンプル
+        neg_indices = list(range(neg_left)) + list(range(neg_right, local_dial_len))
+        if not neg_indices:
+            return None
+        
+        neg_embeddings = local_fused_embeddings[neg_indices]
+        neg_scores = F.cosine_similarity(anchor, neg_embeddings, dim=1)
+        
+        # マージン損失計算
+        if len(pos_scores) == 0 or len(neg_scores) == 0:
+            return None
+        
+        margin_pos = pos_scores.unsqueeze(0).repeat(len(neg_scores), 1).T.flatten()
+        margin_neg = neg_scores.repeat(len(pos_scores))
+        
+        cur_loss = self.score_loss_fn(margin_pos, margin_neg)
+        
+        return cur_loss if not torch.isnan(cur_loss) else None
+--- ./src/test.py ---
+"""
+評価スクリプト
+学習済みモデルの評価を実行
+"""
+import os
+import json
+import torch
+import argparse
+from transformers import AutoTokenizer, set_seed
+from typing import Dict
+
+from config import Config, ModelConfig, InferenceConfig, EvaluationConfig
+from models.architecture import SegmentationModel
+from models.inference import InferenceWrapper
+from data.dataset import InferenceDataset
+from evaluation.metrics import MetricsCalculator, RandomBaselineEvaluator
+from evaluation.detector import BoundaryDetector, MultimethodBoundaryDetector
+from evaluation.visualizer import ResultVisualizer, save_results_to_csv
+
+
+def load_model(
+    checkpoint_path: str,
+    model_config: ModelConfig,
+    inference_config: InferenceConfig,
+    device: torch.device
+) -> InferenceWrapper:
+    """
+    学習済みモデルをロード
+    
+    Args:
+        checkpoint_path: チェックポイントのパス
+        model_config: モデル設定
+        inference_config: 推論設定
+        device: デバイス
+        
+    Returns:
+        InferenceWrapper
+    """
+    # モデルを作成
+    model = SegmentationModel(
+        coherence_model_name=model_config.coherence_model_name,
+        topic_model_name=model_config.topic_model_name,
+        use_comments_for_topic=inference_config.use_comments_for_topic,
+        fusion_method=inference_config.fusion_method
+    ).to(device)
+    
+    # チェックポイントをロード
+    print(f"Loading checkpoint: {checkpoint_path}")
+    state_dict = torch.load(checkpoint_path, map_location=device)
+    
+    # state_dictのキーを修正（TrainingWrapperでラップされている場合）
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('model.'):
+            new_state_dict[k[6:]] = v  # 'model.'を削除
+        else:
+            new_state_dict[k] = v
+    
+    model.load_state_dict(new_state_dict, strict=False)
+    
+    # 推論ラッパーでラップ
+    inference_wrapper = InferenceWrapper(
+        model=model,
+        use_comments=inference_config.use_comments_for_topic,
+        fusion_method=inference_config.fusion_method
+    )
+    
+    return inference_wrapper
+
+
+def evaluate_model(
+    inference_wrapper: InferenceWrapper,
+    dataset: InferenceDataset,
+    tokenizer,
+    eval_config: EvaluationConfig,
+    device: torch.device
+) -> Dict:
+    """
+    モデルを評価
+    
+    Args:
+        inference_wrapper: 推論ラッパー
+        dataset: データセット
+        tokenizer: トークナイザー
+        eval_config: 評価設定
+        device: デバイス
+        
+    Returns:
+        評価結果の辞書
+    """
+    # データを取得
+    sentences = dataset.get_sentences()
+    gold_boundaries = dataset.get_gold_boundaries()
+    comments = dataset.get_comments() if inference_wrapper.use_comments else None
+    
+    print(f"発話数: {len(sentences)}")
+    print(f"正解境界数: {sum(gold_boundaries)}")
+    
+    # スコアを予測
+    print("スコアを計算中...")
+    raw_scores, debug_info = inference_wrapper.predict_scores(
+        sentences=sentences,
+        tokenizer=tokenizer,
+        comments=comments,
+        device=device
+    )
+    
+    # 深度スコアを計算
+    print("深度スコアを計算中...")
+    depth_scores, depth_stats = inference_wrapper.compute_depth_scores(raw_scores)
+    
+    # 複数の方法で境界検出を試行
+    print("境界を検出中...")
+    detector = MultimethodBoundaryDetector(eval_config.boundary_detection_methods)
+    
+    def pk_metric(pred, gold):
+        return MetricsCalculator.calculate_pk(pred, gold)
+    
+    best_boundaries, best_method, best_pk, all_results = detector.detect_best(
+        depth_scores=depth_scores,
+        gold_boundaries=gold_boundaries,
+        metric_fn=pk_metric
+    )
+    
+    print(f"\n最適な検出方法: {best_method}")
+    print(f"検出境界数: {len(best_boundaries)}")
+    
+    # 境界ラベルを作成
+    predicted_labels = BoundaryDetector.boundaries_to_labels(
+        best_boundaries, len(gold_boundaries)
+    )
+    
+    # 評価指標を計算
+    print("評価指標を計算中...")
+    metrics = MetricsCalculator.calculate_all_metrics(
+        predicted_boundaries=predicted_labels,
+        gold_boundaries=gold_boundaries
+    )
+    
+    # ランダムベースラインを評価
+    print("ランダムベースラインを評価中...")
+    random_metrics = RandomBaselineEvaluator.evaluate(
+        gold_boundaries=gold_boundaries,
+        num_trials=eval_config.num_random_trials
+    )
+    
+    # 結果をまとめる
+    result = {
+        'sentences': sentences,
+        'raw_scores': raw_scores,
+        'depth_scores': depth_scores,
+        'predicted_boundaries': predicted_labels,
+        'gold_boundaries': gold_boundaries,
+        'best_method': best_method,
+        'metrics': metrics,
+        'random_baseline': random_metrics,
+        'debug_scores': debug_info,
+        'all_detection_results': all_results
+    }
+    
+    return result
+
+
+def print_results(result: Dict):
+    """
+    結果を表示
+    
+    Args:
+        result: 評価結果
+    """
+    print("\n" + "="*60)
+    print("評価結果サマリー")
+    print("="*60)
+    
+    metrics = result['metrics']
+    print(f"Pkスコア: {metrics['Pk']:.4f}")
+    print(f"WindowDiff: {metrics['WindowDiff']:.4f}")
+    print(f"適合率: {metrics['precision']:.4f}")
+    print(f"再現率: {metrics['recall']:.4f}")
+    print(f"F1スコア: {metrics['f1']:.4f}")
+    print(f"検出境界数: {sum(result['predicted_boundaries'])}")
+    print(f"正解境界数: {sum(result['gold_boundaries'])}")
+    print(f"最適な検出方法: {result['best_method']}")
+    print(f"ウィンドウサイズ: {metrics['window_size']}")
+    
+    print("\nランダムベースライン:")
+    random = result['random_baseline']
+    print(f"  Pk: {random['pk_mean']:.4f} ± {random['pk_std']:.4f}")
+    print(f"  WD: {random['wd_mean']:.4f} ± {random['wd_std']:.4f}")
+    
+    # 各検出方法の結果を表示
+    print("\n全ての検出方法の結果:")
+    for method, res in result['all_detection_results'].items():
+        print(f"  {method}: Pk={res['score']:.4f}, 境界数={res['num_boundaries']}")
+
+
+def main(args):
+    """
+    メイン評価関数
+    
+    Args:
+        args: コマンドライン引数
+    """
+    # シードを設定
+    set_seed(args.seed)
+    
+    # デバイスを設定
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    print(f"Using device: {device}")
+    
+    # 設定を作成
+    model_config = ModelConfig()
+    inference_config = InferenceConfig(
+        use_comments_for_topic=args.use_comments,
+        fusion_method=args.fusion_method,
+        device=str(device)
+    )
+    eval_config = EvaluationConfig(
+        inference_data_path=args.data_path,
+        model_checkpoint=args.checkpoint,
+        save_path=args.save_path
+    )
+    
+    # データセットをロード
+    print(f"Loading data: {args.data_path}")
+    dataset = InferenceDataset(args.data_path)
+    
+    # トークナイザーをロード
+    print(f"Loading tokenizer: {model_config.topic_model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_config.topic_model_name)
+    
+    # モデルをロード
+    inference_wrapper = load_model(
+        checkpoint_path=args.checkpoint,
+        model_config=model_config,
+        inference_config=inference_config,
+        device=device
+    )
+    
+    # 評価を実行
+    print("\n" + "="*60)
+    print("評価を開始")
+    print("="*60)
+    
+    result = evaluate_model(
+        inference_wrapper=inference_wrapper,
+        dataset=dataset,
+        tokenizer=tokenizer,
+        eval_config=eval_config,
+        device=device
+    )
+    
+    # 結果を表示
+    print_results(result)
+    
+    # 結果を保存
+    os.makedirs(args.save_path, exist_ok=True)
+    
+    # JSONに保存
+    result_path = os.path.join(args.save_path, "evaluation_results.json")
+    with open(result_path, 'w', encoding='utf-8') as f:
+        # debug_scoresは大きいので除外
+        save_result = {k: v for k, v in result.items() if k != 'debug_scores'}
+        json.dump(save_result, f, indent=2, ensure_ascii=False)
+    print(f"\n✅ 結果を保存: {result_path}")
+    
+    # CSVに保存
+    save_results_to_csv(result, args.save_path)
+    
+    # 可視化
+    if not args.no_visualization:
+        print("\n結果を可視化中...")
+        visualizer = ResultVisualizer(args.save_path)
+        
+        # ヒストグラム作成
+        visualizer.create_score_histograms(result)
+        
+        # 境界検出結果を可視化
+        visualizer.visualize_boundary_detection(
+            sentences=result['sentences'],
+            depth_scores=result['depth_scores'],
+            predicted_boundaries=result['predicted_boundaries'],
+            gold_boundaries=result['gold_boundaries']
+        )
+        
+        # スコア比較プロット
+        if 'coherence_raw_scores' in result['debug_scores'] and 'topic_raw_scores' in result['debug_scores']:
+            visualizer.plot_score_comparison(
+                coherence_scores=result['debug_scores']['coherence_raw_scores'],
+                topic_scores=result['debug_scores']['topic_raw_scores'],
+                combined_scores=result['raw_scores']
+            )
+    
+    print("\n✅ 評価完了!")
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Evaluate segmentation model')
+    
+    # 必須引数
+    parser.add_argument("--data_path", required=True, help="Path to inference data (JSON)")
+    parser.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
+    
+    # オプション引数
+    parser.add_argument("--save_path", default="./results", help="Path to save results")
+    parser.add_argument("--use_comments", action='store_true', help="Use comments for topic modeling")
+    parser.add_argument("--fusion_method", default="average", choices=['average', 'linear'], help="Fusion method")
+    parser.add_argument("--seed", type=int, default=3407, help="Random seed")
+    parser.add_argument("--no_cuda", action='store_true', help="Disable CUDA")
+    parser.add_argument("--no_visualization", action='store_true', help="Disable visualization")
+    
+    args = parser.parse_args()
+    
+    print("="*60)
+    print("Evaluation Arguments:")
+    print(args)
+    print("="*60)
+    
+    main(args)
+--- ./src/train.py ---
+"""
+学習スクリプト
+モデルの学習を実行
+"""
+import os
+import json
+import torch
+import argparse
+from tqdm import tqdm
+from torch.cuda import amp
+from torch.optim import AdamW
+from transformers import get_linear_schedule_with_warmup, set_seed
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+from config import Config
+from models.architecture import SegmentationModel
+from models.training import TrainingWrapper
+from data.loader import get_train_dataloader
+
+
+def setup_device(args):
+    """
+    デバイスの設定
+    
+    Args:
+        args: コマンドライン引数
+        
+    Returns:
+        (device, n_gpu)
+    """
+    if args.local_rank == -1:
+        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+        n_gpu = torch.cuda.device_count()
+    else:
+        torch.cuda.set_device(args.local_rank)
+        device = torch.device("cuda", args.local_rank)
+        torch.distributed.init_process_group(backend='nccl')
+        n_gpu = 1
+    
+    return device, n_gpu
+
+
+def train_epoch(
+    model,
+    dataloader,
+    optimizer,
+    scheduler,
+    scaler,
+    device,
+    config,
+    epoch
+):
+    """
+    1エポックの学習
+    
+    Args:
+        model: モデル
+        dataloader: データローダー
+        optimizer: オプティマイザー
+        scheduler: スケジューラー
+        scaler: AMPスケーラー
+        device: デバイス
+        config: 設定
+        epoch: 現在のエポック
+        
+    Returns:
+        損失の辞書
+    """
+    model.train()
+    
+    total_loss = 0
+    total_margin_loss = 0
+    total_topic_loss = 0
+    
+    epoch_iterator = tqdm(
+        dataloader,
+        desc=f"Epoch {epoch}",
+        disable=config.training.local_rank not in [-1, 0]
+    )
+    
+    for step, batch in enumerate(epoch_iterator):
+        # データをデバイスに転送
+        input_data = {
+            'coheren_inputs': batch['coheren_inputs'].to(device),
+            'coheren_mask': batch['coheren_mask'].to(device),
+            'coheren_type': batch['coheren_type'].to(device),
+            'topic_context': batch['topic_context'].to(device),
+            'topic_pos': batch['topic_pos'].to(device),
+            'topic_neg': batch['topic_neg'].to(device),
+            'topic_context_mask': batch['topic_context_mask'].to(device),
+            'topic_pos_mask': batch['topic_pos_mask'].to(device),
+            'topic_neg_mask': batch['topic_neg_mask'].to(device),
+            'topic_context_num': batch['topic_context_num'],
+            'topic_pos_num': batch['topic_pos_num'],
+            'topic_neg_num': batch['topic_neg_num'],
+            'topic_train': batch['topic_train'].to(device),
+            'topic_train_mask': batch['topic_train_mask'].to(device),
+            'topic_num': batch['topic_num']
+        }
+        
+        model.zero_grad()
+        
+        # フォワードパス
+        with amp.autocast(enabled=(not config.training.no_amp)):
+            loss, margin_loss, topic_loss = model(
+                input_data,
+                window_size=config.model.window_size
+            )
+        
+        # 分散学習の場合は平均を取る
+        if config.training.local_rank != -1:
+            loss = loss.mean()
+            margin_loss = margin_loss.mean() if margin_loss is not None else torch.tensor(0)
+            topic_loss = topic_loss.mean() if topic_loss is not None else torch.tensor(0)
+        
+        # 損失を累積
+        total_loss += loss.item()
+        total_margin_loss += margin_loss.item() if margin_loss is not None else 0
+        total_topic_loss += topic_loss.item() if topic_loss is not None else 0
+        
+        # バックワードパス
+        if not config.training.no_amp:
+            scaler.scale(loss).backward()
+            if (step + 1) % config.training.gradient_accumulation_steps == 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
+                scheduler.step()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.max_grad_norm)
+            if (step + 1) % config.training.gradient_accumulation_steps == 0:
+                optimizer.step()
+                scheduler.step()
+        
+        epoch_iterator.set_description(f"Loss: {loss.item():.4f}")
+    
+    # 平均損失を計算
+    avg_loss = total_loss / len(dataloader)
+    avg_margin_loss = total_margin_loss / len(dataloader)
+    avg_topic_loss = total_topic_loss / len(dataloader)
+    
+    return {
+        'total_loss': avg_loss,
+        'margin_loss': avg_margin_loss,
+        'topic_loss': avg_topic_loss
+    }
+
+
+def main(args):
+    """
+    メイン学習関数
+    
+    Args:
+        args: コマンドライン引数
+        
+    Returns:
+        エポックごとの損失
+    """
+    # 設定を作成
+    config = Config.from_args(args)
+    
+    # シードを設定
+    set_seed(config.training.seed)
+    
+    # デバイスを設定
+    device, n_gpu = setup_device(args)
+    print(f"Using device: {device}")
+    print(f"Number of GPUs: {n_gpu}")
+    
+    # データローダーを作成
+    train_dataloader = get_train_dataloader(
+        data_path=config.data.data_path,
+        batch_size=config.training.batch_size,
+        local_rank=config.training.local_rank
+    )
+    
+    # モデルを作成
+    base_model = SegmentationModel(
+        coherence_model_name=config.model.coherence_model_name,
+        topic_model_name=config.model.topic_model_name,
+        use_comments_for_topic=False,  # 学習時はコメント不使用
+        fusion_method='average'
+    ).to(device)
+    
+    # 学習ラッパーでラップ
+    model = TrainingWrapper(
+        model=base_model,
+        margin=config.model.margin,
+        train_split=config.model.train_split,
+        window_size=config.model.window_size
+    ).to(device)
+    
+    # チェックポイントから再開
+    if config.training.resume and config.training.checkpoint_path:
+        print(f"Resuming from checkpoint: {config.training.checkpoint_path}")
+        model.load_state_dict(
+            torch.load(config.training.checkpoint_path, map_location=device),
+            strict=False
+        )
+    
+    # 分散学習の設定
+    if config.training.local_rank != -1:
+        model = DDP(
+            model,
+            device_ids=[config.training.local_rank],
+            output_device=config.training.local_rank,
+            find_unused_parameters=True
+        )
+    
+    # オプティマイザーとスケジューラー
+    optimizer = AdamW(model.parameters(), lr=config.training.learning_rate, eps=1e-8)
+    total_steps = len(train_dataloader) * config.training.epochs
+    num_warmup_steps = int(total_steps * config.training.warmup_proportion)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=total_steps
+    )
+    
+    # AMPスケーラー
+    scaler = amp.GradScaler(enabled=(not config.training.no_amp))
+    
+    # 出力ディレクトリ
+    out_path = os.path.join(config.data.root_dir, 'model', config.data.save_model_name)
+    os.makedirs(out_path, exist_ok=True)
+    
+    # 学習ループ
+    epoch_losses = {}
+    
+    for epoch in range(config.training.epochs):
+        print(f'\n======== Epoch {epoch + 1} / {config.training.epochs} ========')
+        
+        # 1エポック学習
+        losses = train_epoch(
+            model=model,
+            dataloader=train_dataloader,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            scaler=scaler,
+            device=device,
+            config=config,
+            epoch=epoch + 1
+        )
+        
+        epoch_losses[epoch] = losses
+        
+        # 損失を表示
+        if config.training.local_rank in [-1, 0]:
+            print(f'Total Loss: {losses["total_loss"]:.4f}')
+            print(f'Margin Loss: {losses["margin_loss"]:.4f}')
+            print(f'Topic Loss: {losses["topic_loss"]:.4f}')
+            
+            # モデルを保存
+            model_to_save = model.module if hasattr(model, 'module') else model
+            save_path = os.path.join(out_path, f'epoch_{epoch}_step_{len(train_dataloader)}')
+            
+            print(f'Saving model to {save_path}')
+            torch.save(model_to_save.state_dict(), save_path)
+    
+    # 損失を保存
+    if config.training.local_rank in [-1, 0]:
+        with open(os.path.join(out_path, 'loss.json'), 'w') as f:
+            json.dump(epoch_losses, f, indent=2)
+    
+    return epoch_losses
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Train segmentation model')
+    
+    # データ関連
+    parser.add_argument("--data_path", required=True, help="Path to data files")
+    parser.add_argument("--save_model_name", required=True, help="Model save name")
+    parser.add_argument("--root", default='.', help="Root directory")
+    
+    # モデルパラメータ
+    parser.add_argument("--margin", type=int, default=1, help="Margin for ranking loss")
+    parser.add_argument("--train_split", type=int, default=5, help="Number of splits for training")
+    parser.add_argument("--window_size", type=int, default=5, help="Window size")
+    
+    # 学習パラメータ
+    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
+    parser.add_argument("--batch_size", type=int, default=12, help="Batch size")
+    parser.add_argument("--lr", type=float, default=3e-5, help="Learning rate")
+    parser.add_argument("--warmup_proportion", type=float, default=0.1, help="Warmup proportion")
+    parser.add_argument("--seed", type=int, default=3407, help="Random seed")
+    parser.add_argument("--accum", type=int, default=1, help="Gradient accumulation steps")
+    
+    # チェックポイント
+    parser.add_argument("--resume", action='store_true', help="Resume from checkpoint")
+    parser.add_argument("--ckpt", type=str, help="Checkpoint path")
+    
+    # デバイス設定
+    parser.add_argument("--no_cuda", action='store_true', help="Disable CUDA")
+    parser.add_argument("--no_amp", action='store_true', help="Disable AMP")
+    parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training")
+    
+    args = parser.parse_args()
+    
+    print("="*60)
+    print("Training Arguments:")
+    print(args)
+    print("="*60)
+    
+    main(args)
+    
+    print("\n✅ Training completed!")
+--- ./src/utils/__init__.py ---
+
+--- ./src/utils/depth_score.py ---
+"""
+深度スコア計算モジュール
+TETアルゴリズムによる深度スコア計算
+"""
+import torch
+import numpy as np
+from typing import List, Union
+
+
+class DepthScoreCalculator:
+    """深度スコア計算クラス"""
+    
+    @staticmethod
+    def calculate(scores: Union[List[float], torch.Tensor, np.ndarray]) -> List[float]:
+        """
+        TETアルゴリズムで深度スコアを計算
+        
+        Args:
+            scores: 入力スコアのリスト
+            
+        Returns:
+            深度スコアのリスト
+        """
+        # Tensorの場合はCPUに移動
+        if isinstance(scores, torch.Tensor):
+            scores = scores.cpu().detach()
+        
+        # ndarrayの場合はそのまま使用
+        if isinstance(scores, np.ndarray):
+            scores = scores.tolist() if scores.ndim == 1 else scores
+        
+        output_scores = []
+        
+        for i in range(len(scores)):
+            lflag = scores[i]
+            rflag = scores[i]
+            
+            # エッジケース: 最初の要素
+            if i == 0:
+                # 右側のみを探索
+                for r in range(i + 1, len(scores)):
+                    if rflag <= scores[r]:
+                        rflag = scores[r]
+                    else:
+                        break
+            
+            # エッジケース: 最後の要素
+            elif i == len(scores) - 1:
+                # 左側のみを探索
+                for l in range(i - 1, -1, -1):
+                    if lflag <= scores[l]:
+                        lflag = scores[l]
+                    else:
+                        break
+            
+            # 通常ケース: 中間の要素
+            else:
+                # 右側を探索
+                for r in range(i + 1, len(scores)):
+                    if rflag <= scores[r]:
+                        rflag = scores[r]
+                    else:
+                        break
+                
+                # 左側を探索
+                for l in range(i - 1, -1, -1):
+                    if lflag <= scores[l]:
+                        lflag = scores[l]
+                    else:
+                        break
+            
+            # 深度スコアを計算
+            depth_score = 0.5 * (lflag + rflag - 2 * scores[i])
+            
+            # Tensorの場合はスカラー値に変換
+            if isinstance(depth_score, torch.Tensor):
+                depth_score = depth_score.item()
+            
+            output_scores.append(float(depth_score))
+        
+        return output_scores
+    
+    @staticmethod
+    def calculate_with_normalization(scores: Union[List[float], torch.Tensor, np.ndarray]) -> tuple:
+        """
+        深度スコアを計算し、Z-score正規化を適用
+        
+        Args:
+            scores: 入力スコアのリスト
+            
+        Returns:
+            (normalized_scores, raw_scores, mean, std)のタプル
+        """
+        raw_scores = DepthScoreCalculator.calculate(scores)
+        
+        # numpy配列に変換
+        scores_array = np.array(raw_scores)
+        
+        # 統計量を計算
+        mean = np.mean(scores_array)
+        std = np.std(scores_array)
+        
+        # Z-score正規化
+        if std > 1e-8:
+            normalized_scores = (scores_array - mean) / std
+        else:
+            normalized_scores = scores_array - mean
+        
+        return normalized_scores.tolist(), raw_scores, float(mean), float(std)
+
+
+def normalize_scores(scores: np.ndarray, method: str = 'zscore') -> np.ndarray:
+    """
+    スコアを正規化
+    
+    Args:
+        scores: 入力スコア
+        method: 正規化方法 ('zscore', 'minmax', 'sigmoid')
+        
+    Returns:
+        正規化されたスコア
+    """
+    if method == 'zscore':
+        mean = np.mean(scores)
+        std = np.std(scores)
+        if std > 1e-8:
+            return (scores - mean) / std
+        else:
+            return scores - mean
+    
+    elif method == 'minmax':
+        min_val = np.min(scores)
+        max_val = np.max(scores)
+        if max_val - min_val > 1e-8:
+            return (scores - min_val) / (max_val - min_val)
+        else:
+            return scores - min_val
+    
+    elif method == 'sigmoid':
+        return 1 / (1 + np.exp(-scores))
+    
+    else:
+        raise ValueError(f"Unknown normalization method: {method}")
+--- ./src/utils/losses.py ---
+"""
+損失関数モジュール
+各種損失関数の定義
+"""
+import torch
+import torch.nn as nn
+
+
+class MarginRankingLoss(nn.Module):
+    """マージンランキング損失"""
+    
+    def __init__(self, margin: float = 1.0):
+        """
+        Args:
+            margin: マージンの大きさ
+        """
+        super().__init__()
+        self.margin = margin
+    
+    def forward(self, positive_scores: torch.Tensor, negative_scores: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            positive_scores: ポジティブサンプルのスコア
+            negative_scores: ネガティブサンプルのスコア
+            
+        Returns:
+            損失値
+        """
+        scores = self.margin - (positive_scores - negative_scores)
+        scores = scores.clamp(min=0)
+        return scores.mean()
+
+
+class CombinedLoss:
+    """複数の損失を組み合わせる"""
+    
+    def __init__(self, topic_weight: float = 1.0, margin_weight: float = 1.0):
+        """
+        Args:
+            topic_weight: トピック損失の重み
+            margin_weight: マージン損失の重み
+        """
+        self.topic_weight = topic_weight
+        self.margin_weight = margin_weight
+        self.topic_loss_fn = nn.CrossEntropyLoss()
+        self.margin_loss_fn = MarginRankingLoss()
+    
+    def __call__(self, topic_loss: torch.Tensor, margin_loss: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            topic_loss: トピック損失
+            margin_loss: マージン損失
+            
+        Returns:
+            結合された損失
+        """
+        return self.topic_weight * topic_loss + self.margin_weight * margin_loss

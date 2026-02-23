@@ -81,7 +81,8 @@ class SegmentationDataCollator:
             batch_first=True
         )
         
-        topic_num = [ex[10] for ex in examples]
+        # topic_num に発話数も含める → training.py でオフセット計算に使う
+        topic_num = [(ex[10][0], ex[10][1], len(ex[9])) for ex in examples]
         
         return {
             'coheren_inputs': coheren_inputs,

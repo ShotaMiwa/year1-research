@@ -191,7 +191,8 @@ class TrainingWrapper(nn.Module):
         margin_count = 0
         
         # バッチ内の各サンプルを処理
-        for dial_len, current_utt in input_data['topic_num']:
+        offset = 0  # topic_train内のオフセット
+        for dial_len, current_utt, utt_count in input_data['topic_num']:
             total_utterances = dial_len
             
             # ローカルウィンドウの範囲を決定
@@ -199,9 +200,9 @@ class TrainingWrapper(nn.Module):
             start_idx = max(0, current_utt - local_window_size)
             end_idx = min(total_utterances, current_utt + local_window_size + 1)
             
-            # 発話ベクトルを取得（学習時はコメント不使用）
-            local_topic_train = input_data['topic_train'][start_idx:end_idx]
-            local_mask = input_data['topic_train_mask'][start_idx:end_idx]
+            # 発話ベクトルを取得（オフセットを使って正しいサンプルの発話を取得）
+            local_topic_train = input_data['topic_train'][offset + start_idx: offset + end_idx]
+            local_mask = input_data['topic_train_mask'][offset + start_idx: offset + end_idx]
             
             local_fused = self.model.encode_topic(
                 input_ids=local_topic_train.to(device),
@@ -223,6 +224,9 @@ class TrainingWrapper(nn.Module):
             
             # メモリ解放
             del local_fused
+            
+            # 次のサンプルのオフセットを更新
+            offset += utt_count
         
         return topic_loss / margin_count if margin_count > 0 else topic_loss
     
