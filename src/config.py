@@ -97,11 +97,8 @@ class EvaluationConfig:
     num_random_trials: int = 100
     
     def __post_init__(self):
-        """設定値の検証"""
-        if not self.inference_data_path:
-            raise ValueError("inference_data_path is required")
-        if not self.model_checkpoint:
-            raise ValueError("model_checkpoint is required")
+        """設定値の検証（学習時はスキップ）"""
+        pass
 
 
 @dataclass

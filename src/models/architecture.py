@@ -141,12 +141,17 @@ class SegmentationModel(nn.Module):
             scores: (batch_size, 2) NSPスコア
             features: pooled output
         """
-        scores, features = self.coherence_model(
+        outputs = self.coherence_model(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids
         )
-        return scores, features
+        # 新しいtransformersはNextSentencePredictorOutputを返す
+        if hasattr(outputs, 'logits'):
+            scores = outputs.logits
+        else:
+            scores = outputs[0]
+        return scores, None
     
     def fuse_vectors(
         self,
