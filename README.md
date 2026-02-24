@@ -16,15 +16,38 @@ implementation** used as the main branch.
 
 ## Code structure
 ```
-src/
-├─ train.py # model training
-├─ model.py # model definition
-├─ test3_csv_rand.py # evaluation / inference
-└─ data_creaters/
-└─ 簡易化版/
-├─ create_inference_data.py
-├─ common_transcript_processing.py
-└─ test_window.py
+year1/
+├── src/
+│   ├── config.py
+│   ├── train.py
+│   ├── test.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── architecture.py
+│   │   ├── training.py
+│   │   └── inference.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── dataset.py
+│   │   ├── collator.py
+│   │   └── loader.py
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   ├── detector.py
+│   │   ├── metrics.py
+│   │   └── visualizer.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── depth_score.py
+│   │   └── losses.py
+│   └── data_creaters/
+│       └── 簡易化版/
+│           ├── common_transcript_processing.py
+│           ├── create_inference_data.py
+│           └── test_window.py   ← データ作成スクリプト
+├── data/
+├── outputs/
+└── README.md
 ```
 ## Data
 - Data files are NOT tracked by git.
