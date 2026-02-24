@@ -189,6 +189,18 @@ class TrainingWrapper(nn.Module):
         device = input_data['topic_train'].device
         topic_loss = torch.tensor(0.0, device=device)
         margin_count = 0
+
+        # ----- デバッグ用カウンタ -----
+        none_count = 0
+        none_reason_counts = {
+            'dial_len_le_1': 0,
+            'no_top_cons': 0,
+            'no_pos_indices': 0,
+            'no_neg_indices': 0,
+            'zero_scores': 0,
+            'nan_loss': 0,
+        }
+        # ------------------------------
         
         # バッチ内の各サンプルを処理
         offset = 0  # topic_train内のオフセット
@@ -210,7 +222,7 @@ class TrainingWrapper(nn.Module):
             )
             
             # 疑似セグメンテーション処理
-            cur_loss = self._process_local_segmentation(
+            cur_loss, reason = self._process_local_segmentation(
                 local_fused,
                 current_utt - start_idx,
                 end_idx - start_idx,
@@ -221,6 +233,10 @@ class TrainingWrapper(nn.Module):
             if cur_loss is not None:
                 topic_loss += cur_loss
                 margin_count += 1
+            else:
+                none_count += 1
+                if reason in none_reason_counts:
+                    none_reason_counts[reason] += 1
             
             # メモリ解放
             del local_fused
@@ -228,6 +244,14 @@ class TrainingWrapper(nn.Module):
             # 次のサンプルのオフセットを更新
             offset += utt_count
         
+        # ----- デバッグログ出力 -----
+        total_samples = margin_count + none_count
+        print(
+            f"[DEBUG topic_loss] margin_count={margin_count}, none_count={none_count}, "
+            f"total={total_samples}, none_reasons={none_reason_counts}"
+        )
+        # ----------------------------
+
         return topic_loss / margin_count if margin_count > 0 else topic_loss
     
     def _process_local_segmentation(
@@ -237,7 +261,7 @@ class TrainingWrapper(nn.Module):
         local_dial_len: int,
         global_window_size: int,
         device: torch.device
-    ) -> Optional[torch.Tensor]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[str]]:
         """
         ローカルウィンドウ内での疑似セグメンテーション処理
         
@@ -249,10 +273,10 @@ class TrainingWrapper(nn.Module):
             device: デバイス
             
         Returns:
-            損失値 or None
+            (損失値 or None, Noneの理由 or None)
         """
         if local_dial_len <= 1:
-            return None
+            return None, 'dial_len_le_1'
         
         # トピックスコア計算
         top_cons, top_curs = [], []
@@ -263,7 +287,7 @@ class TrainingWrapper(nn.Module):
             top_curs.append(top_cur)
         
         if not top_cons:
-            return None
+            return None, 'no_top_cons'
         
         top_cons = torch.stack(top_cons)
         top_curs = torch.stack(top_curs)
@@ -297,9 +321,10 @@ class TrainingWrapper(nn.Module):
         # マージン損失の計算
         pos_left = max(tet_mid_seg[0], local_current_idx - global_window_size)
         pos_right = min(tet_mid_seg[1], local_current_idx + global_window_size + 1)
-        
-        neg_left = min(tet_seg[max(0, tet_mid-1)], local_current_idx - global_window_size)
-        neg_right = max(tet_seg[tet_mid], local_current_idx + global_window_size + 1)
+
+        # ✅ 修正: 現在のセグメント外の発話をネガティブとして使う
+        # （修正前は neg_left/neg_right の計算が誤っており、neg_indices がほぼ常に空になっていた）
+        neg_indices = list(range(0, tet_mid_seg[0])) + list(range(tet_mid_seg[1], local_dial_len))
         
         # アンカー
         anchor = local_fused_embeddings[local_current_idx].unsqueeze(0)
@@ -308,26 +333,28 @@ class TrainingWrapper(nn.Module):
         pos_indices = list(range(pos_left, local_current_idx)) + \
                      list(range(local_current_idx + 1, pos_right))
         if not pos_indices:
-            return None
+            return None, 'no_pos_indices'
         
         pos_embeddings = local_fused_embeddings[pos_indices]
         pos_scores = F.cosine_similarity(anchor, pos_embeddings, dim=1)
         
         # ネガティブサンプル
-        neg_indices = list(range(neg_left)) + list(range(neg_right, local_dial_len))
         if not neg_indices:
-            return None
+            return None, 'no_neg_indices'
         
         neg_embeddings = local_fused_embeddings[neg_indices]
         neg_scores = F.cosine_similarity(anchor, neg_embeddings, dim=1)
         
         # マージン損失計算
         if len(pos_scores) == 0 or len(neg_scores) == 0:
-            return None
+            return None, 'zero_scores'
         
         margin_pos = pos_scores.unsqueeze(0).repeat(len(neg_scores), 1).T.flatten()
         margin_neg = neg_scores.repeat(len(pos_scores))
         
         cur_loss = self.score_loss_fn(margin_pos, margin_neg)
         
-        return cur_loss if not torch.isnan(cur_loss) else None
+        if torch.isnan(cur_loss):
+            return None, 'nan_loss'
+        
+        return cur_loss, None
