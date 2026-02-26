@@ -77,7 +77,11 @@ def train_epoch(
         desc=f"Epoch {epoch}",
         disable=config.training.local_rank not in [-1, 0]
     )
-    
+
+    # 勾配はエポック開始時に一度だけゼロクリアし、
+    # gradient_accumulation_steps ごとに optimizer.step() 後に再度ゼロクリアする
+    model.zero_grad()
+
     for step, batch in enumerate(epoch_iterator):
         # データをデバイスに転送
         input_data = {
@@ -97,9 +101,7 @@ def train_epoch(
             'topic_train_mask': batch['topic_train_mask'].to(device),
             'topic_num': batch['topic_num']
         }
-        
-        model.zero_grad()
-        
+
         # フォワードパス
         with amp.autocast(enabled=(not config.training.no_amp)):
             loss, margin_loss, topic_loss = model(
@@ -127,12 +129,14 @@ def train_epoch(
                 scaler.step(optimizer)
                 scaler.update()
                 scheduler.step()
+                model.zero_grad()
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.max_grad_norm)
             if (step + 1) % config.training.gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.max_grad_norm)
                 optimizer.step()
                 scheduler.step()
+                model.zero_grad()
         
         epoch_iterator.set_description(f"Loss: {loss.item():.4f}")
     

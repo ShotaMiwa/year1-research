@@ -295,9 +295,9 @@ class TrainingWrapper(nn.Module):
         
         # 深度スコア計算
         raw_depth_scores = self.depth_calculator.calculate(torch.sigmoid(topic_scores))
-        
-        # Z-score正規化
-        depth_scores_tensor = torch.stack([torch.tensor(s, device=device) for s in raw_depth_scores])
+
+        # Z-score正規化（リストから一括で Tensor 化してメモリ使用を抑える）
+        depth_scores_tensor = torch.tensor(raw_depth_scores, device=device)
         local_mean = depth_scores_tensor.mean()
         local_std = depth_scores_tensor.std()
         
