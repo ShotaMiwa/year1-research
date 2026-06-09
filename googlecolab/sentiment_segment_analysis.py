@@ -79,7 +79,7 @@ def parse_timetable(timetable_raw: str) -> List[Tuple[float, float]]:
 
 def load_sentiment_pipeline(device: int = -1):
     """
-    感情分析モデル 'cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual'
+    感情分析モデル 'LoneWolfgang/bert-for-japanese-twitter-sentiment'
     のパイプラインをロードします。
     device: GPUを使用する場合は 0 (または適切なデバイス番号), CPUの場合は -1
     """
@@ -87,7 +87,6 @@ def load_sentiment_pipeline(device: int = -1):
     print(f"感情分析モデル {model_name} をロード中... (device={device})")
     
     # センチメント感情分析パイプライン
-    # cardiffnlpのこのモデルはラベルが 0: negative, 1: neutral, 2: positive とマッピングされます
     sentiment_pipeline = pipeline(
         "sentiment-analysis",
         model=model_name,
@@ -275,7 +274,7 @@ def analyze_sentiment_by_segments(
     return df_results
 
 
-# ── Google Colab で実行する際の試用のコード ────────────────────
+# ── Google Colab で実行する際のテスト用のコード ────────────────────
 if __name__ == "__main__":
     # テスト実行用の設定
     TEST_URL = "https://www.youtube.com/watch?v=pP2KLW-_7hQ"
