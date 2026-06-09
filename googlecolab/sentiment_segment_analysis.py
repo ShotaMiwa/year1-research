@@ -83,7 +83,7 @@ def load_sentiment_pipeline(device: int = -1):
     のパイプラインをロードします。
     device: GPUを使用する場合は 0 (または適切なデバイス番号), CPUの場合は -1
     """
-    model_name = "cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual"
+    model_name = "LoneWolfgang/bert-for-japanese-twitter-sentiment"
     print(f"感情分析モデル {model_name} をロード中... (device={device})")
     
     # センチメント感情分析パイプライン
@@ -275,7 +275,7 @@ def analyze_sentiment_by_segments(
     return df_results
 
 
-# ── Google Colab で実行する際のお試し用のコード ────────────────────
+# ── Google Colab で実行する際の試用のコード ────────────────────
 if __name__ == "__main__":
     # テスト実行用の設定
     TEST_URL = "https://www.youtube.com/watch?v=pP2KLW-_7hQ"
@@ -284,6 +284,26 @@ if __name__ == "__main__":
     0:01:49 0:03:44
     0:03:46 0:06:00
     0:06:56 0:08:47
+    0:08:47 0:09:51
+    0:10:07 0:11:49
+    0:11:50 0:14:22
+    0:14:24 0:15:30
+    0:16:10 0:17:36
+    0:17:36 0:18:38
+    0:20:53 0:21:57
+    0:23:47 0:26:08
+    0:28:34 0:32:21
+    0:32:41 0:33:48
+    0:34:30 0:36:42
+    0:39:13 0:40:37
+    0:45:51 0:47:08
+    0:52:30 0:54:47
+    0:55:17 0:57:42
+    0:57:44 0:58:44
+    1:00:35 1:03:03
+    1:03:06 1:04:24
+    1:04:47 1:06:43
+    1:10:12 1:14:51
     """
     
     print("=== セグメント感情分析テスト実行 ===")
