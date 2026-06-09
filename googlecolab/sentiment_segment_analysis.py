@@ -223,32 +223,50 @@ def analyze_sentiment_by_segments(
     # 4. セグメントごとに感情分析を実行
     print("\n--- 感情分析と比率計算を実行中 ---")
     
-    # 効率化のため、セグメントごとに分かれたテキストをフラットなリストにして一括推論する準備をします
+    # Prepare flat lists for batch inference with segment-wise subtitle chunking.
     all_subs_flat = []
     all_coms_flat = []
-    
-    # 各テキストが属するセグメントIDを記録するリスト
     sub_segment_ids = []
     com_segment_ids = []
-    
+
+    max_chunk_chars = 300  # Approximate token limit for the models.
+    sub_chunk_counts = []  # track number of subtitle chunks per segment
+
     for seg in segment_data:
-        all_subs_flat.extend(seg["subtitles"])
-        sub_segment_ids.extend([seg["id"]] * len(seg["subtitles"]))
-        
+        # Combine subtitles within the segment.
+        combined_sub = " ".join(seg["subtitles"])
+        # Split into chunks respecting the character limit.
+        chunks = []
+        if len(combined_sub) <= max_chunk_chars:
+            chunks = [combined_sub] if combined_sub else []
+        else:
+            start = 0
+            while start < len(combined_sub):
+                chunk = combined_sub[start:start + max_chunk_chars]
+                chunks.append(chunk)
+                start += max_chunk_chars
+        # Append chunks and associate with segment ID.
+        all_subs_flat.extend(chunks)
+        sub_segment_ids.extend([seg["id"]] * len(chunks))
+        sub_chunk_counts.append(len(chunks))
+
+        # Comments are processed per comment (no chunking).
         all_coms_flat.extend(seg["comments"])
         com_segment_ids.extend([seg["id"]] * len(seg["comments"]))
         
-    # 各セグメントの字幕・コメントのフラットリスト内でのインデックス範囲（スライス）を事前計算
+    # Prepare sub-slice indices based on chunked subtitles
     sub_slices = []
     com_slices = []
     curr_sub_idx = 0
     curr_com_idx = 0
+    # Compute number of subtitle chunks per segment (may differ from original subtitle count)
     for seg in segment_data:
-        num_subs = len(seg["subtitles"])
+        # Number of subtitle chunks added for this segment
+        num_sub_chunks = sub_segment_ids.count(seg["id"]) - curr_sub_idx
         num_coms = len(seg["comments"])
-        sub_slices.append((curr_sub_idx, curr_sub_idx + num_subs))
+        sub_slices.append((curr_sub_idx, curr_sub_idx + num_sub_chunks))
         com_slices.append((curr_com_idx, curr_com_idx + num_coms))
-        curr_sub_idx += num_subs
+        curr_sub_idx += num_sub_chunks
         curr_com_idx += num_coms
 
     is_multi_model = isinstance(sentiment_pipeline, dict)
