@@ -77,13 +77,11 @@ def parse_timetable(timetable_raw: str) -> List[Tuple[float, float]]:
     return segments
 
 
-def load_sentiment_pipeline(device: int = -1):
+def load_sentiment_pipeline(model_name: str = "LoneWolfgang/bert-for-japanese-twitter-sentiment", device: int = -1):
     """
-    感情分析モデル 'LoneWolfgang/bert-for-japanese-twitter-sentiment'
-    のパイプラインをロードします。
+    指定された感情分析モデルのパイプラインをロードします。
     device: GPUを使用する場合は 0 (または適切なデバイス番号), CPUの場合は -1
     """
-    model_name = "LoneWolfgang/bert-for-japanese-twitter-sentiment"
     print(f"感情分析モデル {model_name} をロード中... (device={device})")
     
     # センチメント感情分析パイプライン
@@ -152,7 +150,8 @@ def analyze_sentiment_by_segments(
     min_sentence_length: int = 6
 ) -> pd.DataFrame:
     """
-    YouTube動画の字幕とコメントを取得し、各セグメントに分類して感情分析比率を計算します
+    YouTube動画の字幕とコメントを取得し、各セグメントに分類して感情分析比率を計算します。
+    sentiment_pipeline に辞書形式 {"モデル名": pipeline} を渡すことで複数モデルを一度に比較できます。
     """
     # 1. 字幕の取得と前処理
     print("\n--- 字幕データの取得と前処理 ---")
@@ -230,45 +229,88 @@ def analyze_sentiment_by_segments(
         all_subs_flat.extend(seg["subtitles"])
         all_coms_flat.extend(seg["comments"])
         
-    # 一括バッチ推論の実行
-    sub_labels_flat = predict_sentiment_batch(all_subs_flat, sentiment_pipeline)
-    com_labels_flat = predict_sentiment_batch(all_coms_flat, sentiment_pipeline)
-    
-    # 推論結果を各セグメントに再マッピング
-    sub_idx_offset = 0
-    com_idx_offset = 0
-    
-    rows = []
+    # 各セグメントの字幕・コメントのフラットリスト内でのインデックス範囲（スライス）を事前計算
+    sub_slices = []
+    com_slices = []
+    curr_sub_idx = 0
+    curr_com_idx = 0
     for seg in segment_data:
         num_subs = len(seg["subtitles"])
         num_coms = len(seg["comments"])
+        sub_slices.append((curr_sub_idx, curr_sub_idx + num_subs))
+        com_slices.append((curr_com_idx, curr_com_idx + num_coms))
+        curr_sub_idx += num_subs
+        curr_com_idx += num_coms
+
+    is_multi_model = isinstance(sentiment_pipeline, dict)
+    
+    if is_multi_model:
+        # 複数モデルの場合
+        model_results = {}
+        for model_alias, pipeline_obj in sentiment_pipeline.items():
+            print(f"\nモデル '{model_alias}' での感情分析を実行します。")
+            sub_labels = predict_sentiment_batch(all_subs_flat, pipeline_obj)
+            com_labels = predict_sentiment_batch(all_coms_flat, pipeline_obj)
+            model_results[model_alias] = {
+                "sub_labels": sub_labels,
+                "com_labels": com_labels
+            }
+    else:
+        # 単一モデルの場合
+        sub_labels_flat = predict_sentiment_batch(all_subs_flat, sentiment_pipeline)
+        com_labels_flat = predict_sentiment_batch(all_coms_flat, sentiment_pipeline)
         
-        # 字幕のラベル切り出し
-        seg_sub_labels = sub_labels_flat[sub_idx_offset : sub_idx_offset + num_subs]
-        sub_idx_offset += num_subs
+    # 推論結果を各セグメントに再マッピングして集計
+    rows = []
+    for idx, seg in enumerate(segment_data):
+        num_subs = len(seg["subtitles"])
+        num_coms = len(seg["comments"])
         
-        # コメントのラベル切り出し
-        seg_com_labels = com_labels_flat[com_idx_offset : com_idx_offset + num_coms]
-        com_idx_offset += num_coms
-        
-        # 感情比率の計算
-        sub_pos, sub_neu, sub_neg, sub_count = calculate_sentiment_ratio(seg_sub_labels)
-        com_pos, com_neu, com_neg, com_count = calculate_sentiment_ratio(seg_com_labels)
-        
-        rows.append({
+        row = {
             "セグメント": seg["id"],
             "開始時刻": sec_to_ts(seg["start"]),
             "終了時刻": sec_to_ts(seg["end"]),
             "長さ(秒)": int(seg["end"] - seg["start"]),
-            "字幕数": sub_count,
-            "字幕_Positive(%)": round(sub_pos, 2),
-            "字幕_Neutral(%)": round(sub_neu, 2),
-            "字幕_Negative(%)": round(sub_neg, 2),
-            "コメント数": com_count,
-            "コメント_Positive(%)": round(com_pos, 2),
-            "コメント_Neutral(%)": round(com_neu, 2),
-            "コメント_Negative(%)": round(com_neg, 2),
-        })
+            "字幕数": num_subs,
+        }
+        
+        sub_start, sub_end = sub_slices[idx]
+        com_start, com_end = com_slices[idx]
+        
+        if is_multi_model:
+            # 複数モデルのスコアを結合
+            for model_alias, results in model_results.items():
+                seg_sub_labels = results["sub_labels"][sub_start:sub_end]
+                seg_com_labels = results["com_labels"][com_start:com_end]
+                
+                sub_pos, sub_neu, sub_neg, _ = calculate_sentiment_ratio(seg_sub_labels)
+                com_pos, com_neu, com_neg, _ = calculate_sentiment_ratio(seg_com_labels)
+                
+                row[f"{model_alias}_字幕_Positive(%)"] = round(sub_pos, 2)
+                row[f"{model_alias}_字幕_Neutral(%)"] = round(sub_neu, 2)
+                row[f"{model_alias}_字幕_Negative(%)"] = round(sub_neg, 2)
+                
+                row[f"{model_alias}_コメント_Positive(%)"] = round(com_pos, 2)
+                row[f"{model_alias}_コメント_Neutral(%)"] = round(com_neu, 2)
+                row[f"{model_alias}_コメント_Negative(%)"] = round(com_neg, 2)
+        else:
+            # 単一モデルのスコアを結合
+            seg_sub_labels = sub_labels_flat[sub_start:sub_end]
+            seg_com_labels = com_labels_flat[com_start:com_end]
+            
+            sub_pos, sub_neu, sub_neg, _ = calculate_sentiment_ratio(seg_sub_labels)
+            com_pos, com_neu, com_neg, _ = calculate_sentiment_ratio(seg_com_labels)
+            
+            row["字幕_Positive(%)"] = round(sub_pos, 2)
+            row["字幕_Neutral(%)"] = round(sub_neu, 2)
+            row["字幕_Negative(%)"] = round(sub_neg, 2)
+            
+            row["コメント_Positive(%)"] = round(com_pos, 2)
+            row["コメント_Neutral(%)"] = round(com_neu, 2)
+            row["コメント_Negative(%)"] = round(com_neg, 2)
+            
+        row["コメント数"] = num_coms
+        rows.append(row)
         
     df_results = pd.DataFrame(rows)
     return df_results
@@ -314,14 +356,18 @@ if __name__ == "__main__":
     # 2. パイプライン準備 (GPUが使えれば device=0)
     import torch
     device = 0 if torch.cuda.is_available() else -1
-    sentiment_pipeline = load_sentiment_pipeline(device=device)
+    
+    # 2つのモデルをロードして比較用に格納
+    models = {
+        "日本語BERT": load_sentiment_pipeline("LoneWolfgang/bert-for-japanese-twitter-sentiment", device=device),
+        "多言語XLM-R": load_sentiment_pipeline("cardiffnlp/twitter-xlm-roberta-base-sentiment-multilingual", device=device)
+    }
     
     # 3. 実行（テストのためコメント取得はオフにすることも可能）
-    # ※コメント数が多い動画では PyTchat の取得に数分かかる場合があります。
     df_results = analyze_sentiment_by_segments(
         video_url=TEST_URL,
         segments=segments,
-        sentiment_pipeline=sentiment_pipeline,
+        sentiment_pipeline=models, # 辞書を渡して比較実行
         enable_comments=True,
         min_sentence_length=6
     )
@@ -331,6 +377,6 @@ if __name__ == "__main__":
     print(df_results.to_string(index=False))
     
     # CSVに保存
-    output_csv = "./segment_sentiment_results.csv"
+    output_csv = "./segment_sentiment_comparison_results.csv"
     df_results.to_csv(output_csv, index=False, encoding="utf-8-sig")
     print(f"結果をCSVに保存しました: {output_csv}")
