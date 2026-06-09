@@ -229,7 +229,7 @@ def analyze_sentiment_by_segments(
     sub_segment_ids = []
     com_segment_ids = []
 
-    max_chunk_chars = 300  # Approximate token limit for the models.
+    max_chunk_chars = 120  # Japanese: ~1 char ≈ 1 token; 128 token limit → 120 chars as safe upper bound.
     sub_chunk_counts = []  # track number of subtitle chunks per segment
 
     for seg in segment_data:
