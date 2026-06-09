@@ -109,20 +109,18 @@ def map_label_name(hf_label: str) -> str:
     return "Unknown"
 
 
-def predict_sentiment_batch(texts: List[str], sentiment_pipeline, batch_size: int = 32) -> Tuple[List[str], List[float]]:
+def predict_sentiment_batch(texts: List[str], sentiment_pipeline, batch_size: int = 32) -> List[str]:
     """
-    大量のテキストリストに対してバッチ処理で感情予測を実行します。
-    返り値: (ラベルリスト, 確信度スコアリスト)
+    大量のテキストリストに対してバッチ処理で感情予測を実行します
     """
     if not texts:
-        return [], []
+        return []
     
     print(f"{len(texts)} 件のテキストを感情分析中（バッチサイズ={batch_size}）...")
     results = sentiment_pipeline(texts, batch_size=batch_size, truncation=True, max_length=128)
     
     mapped_labels = [map_label_name(res["label"]) for res in results]
-    scores = [res["score"] for res in results]
-    return mapped_labels, scores
+    return mapped_labels
 
 
 def calculate_sentiment_ratio(labels: List[str]) -> Tuple[float, float, float, int]:
@@ -142,22 +140,6 @@ def calculate_sentiment_ratio(labels: List[str]) -> Tuple[float, float, float, i
     neg_ratio = (neg_count / total) * 100
     
     return pos_ratio, neu_ratio, neg_ratio, total
-
-
-def calculate_weighted_sentiment_score(labels: List[str], scores: List[float]) -> float:
-    """
-    確信度（score）で重み付けした感情スコアを算出します。
-    Positive=+1, Neutral=0, Negative=-1 として加重平均を計算。
-    返り値は -1.0 〜 +1.0 の範囲。テキストが無い場合は nan を返します。
-    """
-    if not labels:
-        return float('nan')
-    label_values = {"Positive": 1.0, "Neutral": 0.0, "Negative": -1.0}
-    total_weight = sum(scores)
-    if total_weight == 0:
-        return float('nan')
-    weighted_sum = sum(label_values.get(lbl, 0.0) * s for lbl, s in zip(labels, scores))
-    return round(weighted_sum / total_weight, 4)
 
 
 def analyze_sentiment_by_segments(
@@ -294,18 +276,16 @@ def analyze_sentiment_by_segments(
         model_results = {}
         for model_alias, pipeline_obj in sentiment_pipeline.items():
             print(f"\nモデル '{model_alias}' での感情分析を実行します。")
-            sub_labels, sub_scores = predict_sentiment_batch(all_subs_flat, pipeline_obj)
-            com_labels, com_scores = predict_sentiment_batch(all_coms_flat, pipeline_obj)
+            sub_labels = predict_sentiment_batch(all_subs_flat, pipeline_obj)
+            com_labels = predict_sentiment_batch(all_coms_flat, pipeline_obj)
             model_results[model_alias] = {
                 "sub_labels": sub_labels,
-                "sub_scores": sub_scores,
-                "com_labels": com_labels,
-                "com_scores": com_scores
+                "com_labels": com_labels
             }
     else:
         # 単一モデルの場合
-        sub_labels_flat, sub_scores_flat = predict_sentiment_batch(all_subs_flat, sentiment_pipeline)
-        com_labels_flat, com_scores_flat = predict_sentiment_batch(all_coms_flat, sentiment_pipeline)
+        sub_labels_flat = predict_sentiment_batch(all_subs_flat, sentiment_pipeline)
+        com_labels_flat = predict_sentiment_batch(all_coms_flat, sentiment_pipeline)
         
     # 推論結果を各セグメントに再マッピングして集計
     rows = []
@@ -328,9 +308,7 @@ def analyze_sentiment_by_segments(
             # 複数モデルのスコアを結合
             for model_alias, results in model_results.items():
                 seg_sub_labels = results["sub_labels"][sub_start:sub_end]
-                seg_sub_scores = results["sub_scores"][sub_start:sub_end]
                 seg_com_labels = results["com_labels"][com_start:com_end]
-                seg_com_scores = results["com_scores"][com_start:com_end]
                 
                 sub_pos, sub_neu, sub_neg, _ = calculate_sentiment_ratio(seg_sub_labels)
                 com_pos, com_neu, com_neg, _ = calculate_sentiment_ratio(seg_com_labels)
@@ -338,18 +316,14 @@ def analyze_sentiment_by_segments(
                 row[f"{model_alias}_字幕_Positive(%)"] = round(sub_pos, 2)
                 row[f"{model_alias}_字幕_Neutral(%)"] = round(sub_neu, 2)
                 row[f"{model_alias}_字幕_Negative(%)"] = round(sub_neg, 2)
-                row[f"{model_alias}_字幕_確信度スコア"] = calculate_weighted_sentiment_score(seg_sub_labels, seg_sub_scores)
                 
                 row[f"{model_alias}_コメント_Positive(%)"] = round(com_pos, 2)
                 row[f"{model_alias}_コメント_Neutral(%)"] = round(com_neu, 2)
                 row[f"{model_alias}_コメント_Negative(%)"] = round(com_neg, 2)
-                row[f"{model_alias}_コメント_確信度スコア"] = calculate_weighted_sentiment_score(seg_com_labels, seg_com_scores)
         else:
             # 単一モデルのスコアを結合
             seg_sub_labels = sub_labels_flat[sub_start:sub_end]
-            seg_sub_scores = sub_scores_flat[sub_start:sub_end]
             seg_com_labels = com_labels_flat[com_start:com_end]
-            seg_com_scores = com_scores_flat[com_start:com_end]
             
             sub_pos, sub_neu, sub_neg, _ = calculate_sentiment_ratio(seg_sub_labels)
             com_pos, com_neu, com_neg, _ = calculate_sentiment_ratio(seg_com_labels)
@@ -357,12 +331,10 @@ def analyze_sentiment_by_segments(
             row["字幕_Positive(%)"] = round(sub_pos, 2)
             row["字幕_Neutral(%)"] = round(sub_neu, 2)
             row["字幕_Negative(%)"] = round(sub_neg, 2)
-            row["字幕_確信度スコア"] = calculate_weighted_sentiment_score(seg_sub_labels, seg_sub_scores)
             
             row["コメント_Positive(%)"] = round(com_pos, 2)
             row["コメント_Neutral(%)"] = round(com_neu, 2)
             row["コメント_Negative(%)"] = round(com_neg, 2)
-            row["コメント_確信度スコア"] = calculate_weighted_sentiment_score(seg_com_labels, seg_com_scores)
             
         row["コメント数"] = num_coms
         rows.append(row)
