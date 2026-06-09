@@ -147,11 +147,13 @@ def analyze_sentiment_by_segments(
     segments: List[Tuple[float, float]],
     sentiment_pipeline,
     enable_comments: bool = True,
-    min_sentence_length: int = 6
+    min_sentence_length: int = 6,
+    disagreement_csv_path: str = "sentiment_disagreements.csv"
 ) -> pd.DataFrame:
     """
     YouTube動画の字幕とコメントを取得し、各セグメントに分類して感情分析比率を計算します。
     sentiment_pipeline に辞書形式 {"モデル名": pipeline} を渡すことで複数モデルを一度に比較できます。
+    また、2つ以上のモデルがある場合、モデル間で判定が不一致だったテキストを CSV に書き出します。
     """
     # 1. 字幕の取得と前処理
     print("\n--- 字幕データの取得と前処理 ---")
@@ -225,9 +227,16 @@ def analyze_sentiment_by_segments(
     all_subs_flat = []
     all_coms_flat = []
     
+    # 各テキストが属するセグメントIDを記録するリスト
+    sub_segment_ids = []
+    com_segment_ids = []
+    
     for seg in segment_data:
         all_subs_flat.extend(seg["subtitles"])
+        sub_segment_ids.extend([seg["id"]] * len(seg["subtitles"]))
+        
         all_coms_flat.extend(seg["comments"])
+        com_segment_ids.extend([seg["id"]] * len(seg["comments"]))
         
     # 各セグメントの字幕・コメントのフラットリスト内でのインデックス範囲（スライス）を事前計算
     sub_slices = []
@@ -313,6 +322,47 @@ def analyze_sentiment_by_segments(
         rows.append(row)
         
     df_results = pd.DataFrame(rows)
+
+    # 5. 複数モデル比較時の判定不一致データの抽出とCSV保存
+    if is_multi_model and len(sentiment_pipeline) >= 2 and disagreement_csv_path:
+        print("\n--- モデル間での判定不一致テキストを抽出中 ---")
+        disagreement_rows = []
+        model_names = list(model_results.keys())
+        
+        # 字幕の不一致抽出
+        for idx, text in enumerate(all_subs_flat):
+            labels = {model: model_results[model]["sub_labels"][idx] for model in model_names}
+            # ユニークなラベル数が2以上あれば、いずれかのモデルで判定が異なる
+            if len(set(labels.values())) > 1:
+                row = {
+                    "種別": "字幕",
+                    "セグメントID": sub_segment_ids[idx],
+                    "テキスト": text
+                }
+                for model, label in labels.items():
+                    row[f"{model}_判定"] = label
+                disagreement_rows.append(row)
+                
+        # コメントの不一致抽出
+        for idx, text in enumerate(all_coms_flat):
+            labels = {model: model_results[model]["com_labels"][idx] for model in model_names}
+            if len(set(labels.values())) > 1:
+                row = {
+                    "種別": "コメント",
+                    "セグメントID": com_segment_ids[idx],
+                    "テキスト": text
+                }
+                for model, label in labels.items():
+                    row[f"{model}_判定"] = label
+                disagreement_rows.append(row)
+                
+        if disagreement_rows:
+            df_disagree = pd.DataFrame(disagreement_rows)
+            df_disagree.to_csv(disagreement_csv_path, index=False, encoding="utf-8-sig")
+            print(f"モデル間で判定が異なったデータ（{len(df_disagree)}件）をCSVに保存しました: {disagreement_csv_path}")
+        else:
+            print("すべてのデータでモデル間の判定が一致しました。")
+            
     return df_results
 
 
@@ -369,7 +419,8 @@ if __name__ == "__main__":
         segments=segments,
         sentiment_pipeline=models, # 辞書を渡して比較実行
         enable_comments=True,
-        min_sentence_length=6
+        min_sentence_length=6,
+        disagreement_csv_path="./sentiment_disagreements.csv"
     )
     
     # 4. 結果の出力
