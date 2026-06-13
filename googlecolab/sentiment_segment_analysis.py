@@ -109,18 +109,156 @@ def map_label_name(hf_label: str) -> str:
     return "Unknown"
 
 
-def predict_sentiment_batch(texts: List[str], sentiment_pipeline, batch_size: int = 32) -> List[str]:
+def predict_sentiment_batch(texts: List[str], sentiment_pipeline, batch_size: int = 32) -> Tuple[List[str], List[float]]:
     """
-    大量のテキストリストに対してバッチ処理で感情予測を実行します
+    大量のテキストリストに対してバッチ処理で感情予測を実行します。
+    返り値: (ラベルリスト, 確信度スコアリスト)
     """
     if not texts:
-        return []
+        return [], []
     
     print(f"{len(texts)} 件のテキストを感情分析中（バッチサイズ={batch_size}）...")
     results = sentiment_pipeline(texts, batch_size=batch_size, truncation=True, max_length=128)
     
     mapped_labels = [map_label_name(res["label"]) for res in results]
-    return mapped_labels
+    scores = [res["score"] for res in results]
+    return mapped_labels, scores
+
+
+def save_score_distribution_and_samples(
+    model_name: str,
+    texts: List[str],
+    labels: List[str],
+    scores: List[float],
+    pdf_path: str,
+    md_path: str
+):
+    """
+    感情ラベルごとにスコアの分布をPDFで保存し、
+    指定条件を満たすコメントのサンプルを抽出してコンソール表示およびMarkdownファイル保存します。
+    """
+    import pandas as pd
+    import numpy as np
+    
+    # DataFrameの作成
+    df = pd.DataFrame({
+        "text": texts,
+        "label": labels,
+        "score": scores
+    })
+    # 空白やNaNの除去
+    df = df.dropna(subset=["text"])
+    df = df[df["text"].str.strip() != ""]
+    
+    # 1. グラフ描画 (PDF出力)
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # Headless環境でのエラー防止
+        import matplotlib.pyplot as plt
+        
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+        colors = {"Positive": "#2ecc71", "Neutral": "#95a5a6", "Negative": "#e74c3c"}
+        
+        for ax, label in zip(axes, ["Positive", "Neutral", "Negative"]):
+            label_df = df[df["label"] == label]
+            if not label_df.empty:
+                ax.hist(label_df["score"], bins=20, range=(0.0, 1.0), 
+                        color=colors.get(label, "#3498db"), alpha=0.7, edgecolor='black')
+                ax.set_title(f"{label}\n(Total: {len(label_df)})", fontsize=12, fontweight='bold')
+            else:
+                ax.text(0.5, 0.5, "No Data", horizontalalignment='center', verticalalignment='center')
+                ax.set_title(f"{label}\n(Total: 0)", fontsize=12, fontweight='bold')
+            
+            ax.set_xlabel("Confidence Score", fontsize=10)
+            if ax == axes[0]:
+                ax.set_ylabel("Frequency", fontsize=10)
+            ax.set_xlim(0.0, 1.0)
+            ax.grid(True, linestyle="--", alpha=0.5)
+            
+        plt.suptitle(f"Sentiment Score Distribution (Comments) - {model_name}", fontsize=14, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        plt.savefig(pdf_path, format="pdf", bbox_inches="tight")
+        plt.close()
+        print(f"[{model_name}] スコア分布グラフをPDFに保存しました: {pdf_path}")
+    except Exception as e:
+        print(f"Warning: [{model_name}] グラフ生成中にエラーが発生しました: {e}")
+        
+    # 2. サンプルの抽出
+    # 高スコア群 (> 0.95), 各5件
+    high_samples = {}
+    for label in ["Positive", "Neutral", "Negative"]:
+        filtered = df[(df["label"] == label) & (df["score"] > 0.95)]
+        high_samples[label] = filtered.head(5)
+        
+    # 低スコア群 (0.50 〜 0.60), 各5件
+    low_samples = {}
+    for label in ["Positive", "Neutral", "Negative"]:
+        filtered = df[(df["label"] == label) & (df["score"] >= 0.50) & (df["score"] <= 0.60)]
+        low_samples[label] = filtered.head(5)
+        
+    # Markdown作成
+    md_content = []
+    md_content.append(f"# 感情分析 コメント目視確認レポート - {model_name}\n\n")
+    md_content.append(f"このファイルは、感情分析結果の妥当性を目視確認するためのサンプルコメントです。\n\n")
+    
+    # 高スコア群
+    md_content.append("## ■ 高スコア群 (Confidence Score > 0.95)\n\n")
+    for label in ["Positive", "Neutral", "Negative"]:
+        md_content.append(f"### ● {label} (最大5件)\n\n")
+        samples = high_samples[label]
+        if samples.empty:
+            md_content.append("*該当するコメントは見つかりませんでした。*\n\n")
+        else:
+            for idx, row in samples.reset_index().iterrows():
+                md_content.append(f"{idx + 1}. **Score: {row['score']:.4f}**\n")
+                escaped_text = row['text'].replace('\n', ' ')
+                md_content.append(f"   > {escaped_text}\n\n")
+                
+    # 低スコア群
+    md_content.append("## ■ 低スコア群 (Confidence Score 0.50 〜 0.60)\n\n")
+    for label in ["Positive", "Neutral", "Negative"]:
+        md_content.append(f"### ● {label} (最大5件)\n\n")
+        samples = low_samples[label]
+        if samples.empty:
+            md_content.append("*該当するコメントは見つかりませんでした。*\n\n")
+        else:
+            for idx, row in samples.reset_index().iterrows():
+                md_content.append(f"{idx + 1}. **Score: {row['score']:.4f}**\n")
+                escaped_text = row['text'].replace('\n', ' ')
+                md_content.append(f"   > {escaped_text}\n\n")
+                
+    # Markdownファイル出力
+    try:
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write("".join(md_content))
+        print(f"[{model_name}] 目視確認用サンプルファイルを保存しました: {md_path}")
+    except Exception as e:
+        print(f"Warning: [{model_name}] サンプルファイル保存中にエラーが発生しました: {e}")
+        
+    # コンソール出力
+    print("\n" + "="*80)
+    print(f"  感情分析コメントサンプル目視確認: {model_name}")
+    print("="*80)
+    print("\n【高スコア群 (Confidence Score > 0.95)】")
+    for label in ["Positive", "Neutral", "Negative"]:
+        print(f"\n● {label} (最大5件):")
+        samples = high_samples[label]
+        if samples.empty:
+            print("  (該当なし)")
+        else:
+            for idx, row in samples.reset_index().iterrows():
+                print(f"  {idx + 1}. [{row['score']:.4f}] {row['text']}")
+                
+    print("\n【低スコア群 (Confidence Score 0.50 〜 0.60)】")
+    for label in ["Positive", "Neutral", "Negative"]:
+        print(f"\n● {label} (最大5件):")
+        samples = low_samples[label]
+        if samples.empty:
+            print("  (該当なし)")
+        else:
+            for idx, row in samples.reset_index().iterrows():
+                print(f"  {idx + 1}. [{row['score']:.4f}] {row['text']}")
+    print("\n" + "="*80 + "\n")
 
 
 def calculate_sentiment_ratio(labels: List[str]) -> Tuple[float, float, float, int]:
@@ -276,16 +414,42 @@ def analyze_sentiment_by_segments(
         model_results = {}
         for model_alias, pipeline_obj in sentiment_pipeline.items():
             print(f"\nモデル '{model_alias}' での感情分析を実行します。")
-            sub_labels = predict_sentiment_batch(all_subs_flat, pipeline_obj)
-            com_labels = predict_sentiment_batch(all_coms_flat, pipeline_obj)
+            sub_labels, sub_scores = predict_sentiment_batch(all_subs_flat, pipeline_obj)
+            com_labels, com_scores = predict_sentiment_batch(all_coms_flat, pipeline_obj)
             model_results[model_alias] = {
                 "sub_labels": sub_labels,
-                "com_labels": com_labels
+                "sub_scores": sub_scores,
+                "com_labels": com_labels,
+                "com_scores": com_scores
             }
+            
+            # グラフ作成（PDF出力）とコメントサンプルの抽出（目視確認用）
+            pdf_path = f"./sentiment_score_dist_{model_alias}.pdf"
+            md_path = f"./sentiment_samples_{model_alias}.md"
+            save_score_distribution_and_samples(
+                model_name=model_alias,
+                texts=all_coms_flat,
+                labels=com_labels,
+                scores=com_scores,
+                pdf_path=pdf_path,
+                md_path=md_path
+            )
     else:
         # 単一モデルの場合
-        sub_labels_flat = predict_sentiment_batch(all_subs_flat, sentiment_pipeline)
-        com_labels_flat = predict_sentiment_batch(all_coms_flat, sentiment_pipeline)
+        sub_labels_flat, sub_scores_flat = predict_sentiment_batch(all_subs_flat, sentiment_pipeline)
+        com_labels_flat, com_scores_flat = predict_sentiment_batch(all_coms_flat, sentiment_pipeline)
+        
+        # グラフ作成（PDF出力）とコメントサンプルの抽出（目視確認用）
+        pdf_path = "./sentiment_score_dist.pdf"
+        md_path = "./sentiment_samples.md"
+        save_score_distribution_and_samples(
+            model_name="SentimentModel",
+            texts=all_coms_flat,
+            labels=com_labels_flat,
+            scores=com_scores_flat,
+            pdf_path=pdf_path,
+            md_path=md_path
+        )
         
     # 推論結果を各セグメントに再マッピングして集計
     rows = []
