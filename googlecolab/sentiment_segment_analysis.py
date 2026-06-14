@@ -155,6 +155,12 @@ def save_score_distribution_and_samples(
         import matplotlib
         matplotlib.use('Agg')  # Headless環境でのエラー防止
         import matplotlib.pyplot as plt
+        try:
+            import japanize_matplotlib
+        except ImportError:
+            print("Warning: japanize_matplotlib がインストールされていないため、PDFの日本語が文字化け（トーフ）する可能性があります。")
+            print("文字化けを防ぐには、Google Colab上で !pip install japanize-matplotlib を実行してください。")
+        
         
         fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
         colors = {"Positive": "#2ecc71", "Neutral": "#95a5a6", "Negative": "#e74c3c"}
