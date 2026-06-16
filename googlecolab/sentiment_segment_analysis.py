@@ -200,15 +200,18 @@ def save_score_distribution_and_samples(
     
     sampled_tiers = []
     for tier in tiers:
-        filtered = df[(df["score"] >= tier["min"]) & (df["score"] < tier["max"])]
-        if len(filtered) <= 30:
-            sampled = filtered
-        else:
-            sampled = filtered.sample(n=30, random_state=42)
-        # スコアの降順でソートして保持
+        label_samples = {}
+        for label in ["Positive", "Neutral", "Negative"]:
+            filtered = df[(df["score"] >= tier["min"]) & (df["score"] < tier["max"]) & (df["label"] == label)]
+            if len(filtered) <= 30:
+                sampled = filtered
+            else:
+                sampled = filtered.sample(n=30, random_state=42)
+            label_samples[label] = sampled.sort_values(by="score", ascending=False)
+            
         sampled_tiers.append({
             "name": tier["name"],
-            "df": sampled.sort_values(by="score", ascending=False)
+            "samples": label_samples
         })
         
     # Markdown作成
@@ -217,15 +220,17 @@ def save_score_distribution_and_samples(
     md_content.append(f"このファイルは、感情分析結果の妥当性を目視確認するためのサンプルコメントです。\n\n")
     
     for tier_data in sampled_tiers:
-        md_content.append(f"## ■ {tier_data['name']} (最大30件)\n\n")
-        samples = tier_data["df"]
-        if samples.empty:
-            md_content.append("*該当するコメントは見つかりませんでした。*\n\n")
-        else:
-            for idx, row in samples.reset_index().iterrows():
-                md_content.append(f"{idx + 1}. **Score: {row['score']:.4f} ({row['label']})**\n")
-                escaped_text = row['text'].replace('\n', ' ')
-                md_content.append(f"   > {escaped_text}\n\n")
+        md_content.append(f"## ■ {tier_data['name']}\n\n")
+        for label in ["Positive", "Neutral", "Negative"]:
+            md_content.append(f"### ● {label} (最大30件)\n\n")
+            samples = tier_data["samples"][label]
+            if samples.empty:
+                md_content.append("*該当するコメントは見つかりませんでした。*\n\n")
+            else:
+                for idx, row in samples.reset_index().iterrows():
+                    md_content.append(f"{idx + 1}. **Score: {row['score']:.4f}**\n")
+                    escaped_text = row['text'].replace('\n', ' ')
+                    md_content.append(f"   > {escaped_text}\n\n")
                 
     # Markdownファイル出力
     try:
@@ -241,12 +246,14 @@ def save_score_distribution_and_samples(
     print("="*80)
     for tier_data in sampled_tiers:
         print(f"\n【{tier_data['name']}】")
-        samples = tier_data["df"]
-        if samples.empty:
-            print("  (該当なし)")
-        else:
-            for idx, row in samples.reset_index().iterrows():
-                print(f"  {idx + 1}. [{row['score']:.4f}] ({row['label']}) {row['text']}")
+        for label in ["Positive", "Neutral", "Negative"]:
+            print(f"\n● {label} (最大30件):")
+            samples = tier_data["samples"][label]
+            if samples.empty:
+                print("  (該当なし)")
+            else:
+                for idx, row in samples.reset_index().iterrows():
+                    print(f"  {idx + 1}. [{row['score']:.4f}] {row['text']}")
     print("\n" + "="*80 + "\n")
 
 
