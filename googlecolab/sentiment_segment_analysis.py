@@ -190,46 +190,40 @@ def save_score_distribution_and_samples(
         print(f"Warning: [{model_name}] グラフ生成中にエラーが発生しました: {e}")
         
     # 2. サンプルの抽出
-    # 高スコア群 (> 0.95), 各5件
-    high_samples = {}
-    for label in ["Positive", "Neutral", "Negative"]:
-        filtered = df[(df["label"] == label) & (df["score"] > 0.95)]
-        high_samples[label] = filtered.head(5)
-        
-    # 低スコア群 (0.50 〜 0.60), 各5件
-    low_samples = {}
-    for label in ["Positive", "Neutral", "Negative"]:
-        filtered = df[(df["label"] == label) & (df["score"] >= 0.50) & (df["score"] <= 0.60)]
-        low_samples[label] = filtered.head(5)
+    tiers = [
+        {"name": "層1：0.33 以上 0.50 未満 （低確信度）", "min": 0.33, "max": 0.50},
+        {"name": "層2：0.50 以上 0.65 未満", "min": 0.50, "max": 0.65},
+        {"name": "層3：0.65 以上 0.80 未満", "min": 0.65, "max": 0.80},
+        {"name": "層4：0.80 以上 0.90 未満", "min": 0.80, "max": 0.90},
+        {"name": "層5：0.90 以上 1.01 未満 （高確信度）", "min": 0.90, "max": 1.01},
+    ]
+    
+    sampled_tiers = []
+    for tier in tiers:
+        filtered = df[(df["score"] >= tier["min"]) & (df["score"] < tier["max"])]
+        if len(filtered) <= 30:
+            sampled = filtered
+        else:
+            sampled = filtered.sample(n=30, random_state=42)
+        # スコアの降順でソートして保持
+        sampled_tiers.append({
+            "name": tier["name"],
+            "df": sampled.sort_values(by="score", ascending=False)
+        })
         
     # Markdown作成
     md_content = []
     md_content.append(f"# 感情分析 コメント目視確認レポート - {model_name}\n\n")
     md_content.append(f"このファイルは、感情分析結果の妥当性を目視確認するためのサンプルコメントです。\n\n")
     
-    # 高スコア群
-    md_content.append("## ■ 高スコア群 (Confidence Score > 0.95)\n\n")
-    for label in ["Positive", "Neutral", "Negative"]:
-        md_content.append(f"### ● {label} (最大5件)\n\n")
-        samples = high_samples[label]
+    for tier_data in sampled_tiers:
+        md_content.append(f"## ■ {tier_data['name']} (最大30件)\n\n")
+        samples = tier_data["df"]
         if samples.empty:
             md_content.append("*該当するコメントは見つかりませんでした。*\n\n")
         else:
             for idx, row in samples.reset_index().iterrows():
-                md_content.append(f"{idx + 1}. **Score: {row['score']:.4f}**\n")
-                escaped_text = row['text'].replace('\n', ' ')
-                md_content.append(f"   > {escaped_text}\n\n")
-                
-    # 低スコア群
-    md_content.append("## ■ 低スコア群 (Confidence Score 0.50 〜 0.60)\n\n")
-    for label in ["Positive", "Neutral", "Negative"]:
-        md_content.append(f"### ● {label} (最大5件)\n\n")
-        samples = low_samples[label]
-        if samples.empty:
-            md_content.append("*該当するコメントは見つかりませんでした。*\n\n")
-        else:
-            for idx, row in samples.reset_index().iterrows():
-                md_content.append(f"{idx + 1}. **Score: {row['score']:.4f}**\n")
+                md_content.append(f"{idx + 1}. **Score: {row['score']:.4f} ({row['label']})**\n")
                 escaped_text = row['text'].replace('\n', ' ')
                 md_content.append(f"   > {escaped_text}\n\n")
                 
@@ -245,25 +239,14 @@ def save_score_distribution_and_samples(
     print("\n" + "="*80)
     print(f"  感情分析コメントサンプル目視確認: {model_name}")
     print("="*80)
-    print("\n【高スコア群 (Confidence Score > 0.95)】")
-    for label in ["Positive", "Neutral", "Negative"]:
-        print(f"\n● {label} (最大5件):")
-        samples = high_samples[label]
+    for tier_data in sampled_tiers:
+        print(f"\n【{tier_data['name']}】")
+        samples = tier_data["df"]
         if samples.empty:
             print("  (該当なし)")
         else:
             for idx, row in samples.reset_index().iterrows():
-                print(f"  {idx + 1}. [{row['score']:.4f}] {row['text']}")
-                
-    print("\n【低スコア群 (Confidence Score 0.50 〜 0.60)】")
-    for label in ["Positive", "Neutral", "Negative"]:
-        print(f"\n● {label} (最大5件):")
-        samples = low_samples[label]
-        if samples.empty:
-            print("  (該当なし)")
-        else:
-            for idx, row in samples.reset_index().iterrows():
-                print(f"  {idx + 1}. [{row['score']:.4f}] {row['text']}")
+                print(f"  {idx + 1}. [{row['score']:.4f}] ({row['label']}) {row['text']}")
     print("\n" + "="*80 + "\n")
 
 
