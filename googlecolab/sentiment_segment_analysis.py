@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import json
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple
@@ -36,6 +37,15 @@ try:
 except ImportError:
     print("transformers がインストールされていません。!pip install transformers sentencepiece を実行してください。")
     raise
+
+
+def extract_video_id(url: str) -> str:
+    """YouTubeのURLから動画IDを抽出する"""
+    pattern = r'(?:v=|\/v\/|embed\/|youtu\.be\/|\/shorts\/|^)([a-zA-Z0-9_-]{11})'
+    match = re.search(pattern, url)
+    if match:
+        return match.group(1)
+    return "unknown_video"
 
 
 def ts_to_sec(ts: str) -> float:
@@ -282,35 +292,87 @@ def analyze_sentiment_by_segments(
     sentiment_pipeline,
     enable_comments: bool = True,
     min_sentence_length: int = 6,
-    disagreement_csv_path: str = "sentiment_disagreements.csv"
+    disagreement_csv_path: str = "sentiment_disagreements.csv",
+    cache_dir: str = None
 ) -> pd.DataFrame:
     """
     YouTube動画の字幕とコメントを取得し、各セグメントに分類して感情分析比率を計算します。
     sentiment_pipeline に辞書形式 {"モデル名": pipeline} を渡すことで複数モデルを一度に比較できます。
     また、2つ以上のモデルがある場合、モデル間で判定が不一致だったテキストを CSV に書き出します。
+    cache_dir が指定されている場合、そこから字幕・コメントのキャッシュをロード/保存します。
     """
-    # 1. 字幕の取得と前処理
-    print("\n--- 字幕データの取得と前処理 ---")
-    raw_chunks, raw_metadata = get_raw_transcript(video_url, language="ja")
-    sentences, sentence_metadata = basic_transcript_processing(
-        raw_chunks, raw_metadata, min_len=min_sentence_length
-    )
+    # 1. 動画IDの抽出とキャッシュパスの設定
+    video_id = extract_video_id(video_url)
+    sub_cache_path = None
+    com_cache_path = None
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        sub_cache_path = os.path.join(cache_dir, f"subtitles_{video_id}.json")
+        com_cache_path = os.path.join(cache_dir, f"comments_{video_id}.json")
+
+    # 2. 字幕データの取得と前処理
+    sentences = []
+    sentence_metadata = []
     
-    # 2. コメントの取得と秒数への変換
+    if sub_cache_path and os.path.exists(sub_cache_path):
+        print(f"\n--- 字幕データをキャッシュからロード中 ({sub_cache_path}) ---")
+        try:
+            with open(sub_cache_path, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+                sentences = cache_data["sentences"]
+                sentence_metadata = cache_data["metadata"]
+            print(f"キャッシュからロードした字幕文数: {len(sentences)}")
+        except Exception as e:
+            print(f"Warning: 字幕キャッシュのロードに失敗しました。再取得します: {e}")
+            sub_cache_path = None
+            
+    if not sentences:
+        print("\n--- 字幕データの取得と前処理 ---")
+        raw_chunks, raw_metadata = get_raw_transcript(video_url, language="ja")
+        sentences, sentence_metadata = basic_transcript_processing(
+            raw_chunks, raw_metadata, min_len=min_sentence_length
+        )
+        if sub_cache_path:
+            print(f"字幕データをキャッシュに保存中: {sub_cache_path}")
+            try:
+                with open(sub_cache_path, "w", encoding="utf-8") as f:
+                    json.dump({"sentences": sentences, "metadata": sentence_metadata}, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"Warning: 字幕キャッシュの保存に失敗しました: {e}")
+    
+    # 3. コメントの取得と秒数への変換
     comments = []
     if enable_comments:
-        print("\n--- コメントデータの取得 ---")
-        try:
-            raw_comments = get_comments(video_url)
-            for c in raw_comments:
-                comments.append({
-                    "text": c["text"],
-                    "seconds": timestamp_to_seconds(c["time"])
-                })
-            print(f"取得したコメント総数: {len(comments)}")
-        except Exception as e:
-            print(f"Warning: コメント取得中にエラーが発生しました（スキップします）: {e}")
-            enable_comments = False
+        if com_cache_path and os.path.exists(com_cache_path):
+            print(f"\n--- コメントデータをキャッシュからロード中 ({com_cache_path}) ---")
+            try:
+                with open(com_cache_path, "r", encoding="utf-8") as f:
+                    comments = json.load(f)
+                print(f"キャッシュからロードしたコメント総数: {len(comments)}")
+            except Exception as e:
+                print(f"Warning: コメントキャッシュのロードに失敗しました。再取得します: {e}")
+                com_cache_path = None
+                
+        if not comments:
+            print("\n--- コメントデータの取得 ---")
+            try:
+                raw_comments = get_comments(video_url)
+                for c in raw_comments:
+                    comments.append({
+                        "text": c["text"],
+                        "seconds": timestamp_to_seconds(c["time"])
+                    })
+                print(f"取得したコメント総数: {len(comments)}")
+                if com_cache_path:
+                    print(f"コメントデータをキャッシュに保存中: {com_cache_path}")
+                    try:
+                        with open(com_cache_path, "w", encoding="utf-8") as f:
+                            json.dump(comments, f, ensure_ascii=False, indent=2)
+                    except Exception as e:
+                        print(f"Warning: コメントキャッシュの保存に失敗しました: {e}")
+            except Exception as e:
+                print(f"Warning: コメント取得中にエラーが発生しました（スキップします）: {e}")
+                enable_comments = False
     
     # 3. 各字幕とコメントをセグメントに分類
     print("\n--- 各セグメントへデータを振り分け中 ---")
