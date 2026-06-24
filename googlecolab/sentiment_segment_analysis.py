@@ -293,7 +293,8 @@ def analyze_sentiment_by_segments(
     enable_comments: bool = True,
     min_sentence_length: int = 6,
     disagreement_csv_path: str = "sentiment_disagreements.csv",
-    cache_dir: str = None
+    cache_dir: str = None,
+    annotation_md_paths: Dict[str, str] = None
 ) -> pd.DataFrame:
     """
     YouTube動画の字幕とコメントを取得し、各セグメントに分類して感情分析比率を計算します。
@@ -602,6 +603,62 @@ def analyze_sentiment_by_segments(
             print(f"モデル間で判定が異なったデータ（{len(df_disagree)}件）をCSVに保存しました: {disagreement_csv_path}")
         else:
             print("すべてのデータでモデル間の判定が一致しました。")
+            
+    # 6. アノテーションデータ（正解ラベル）がある場合の混合行列の計算と出力
+    if annotation_md_paths:
+        from evaluation_utils import parse_annotated_markdown, generate_confusion_matrix_md
+        
+        # 複数モデルか単一モデルかでアノテーションパスの辞書を構築
+        anno_paths = {}
+        if isinstance(annotation_md_paths, dict):
+            anno_paths = annotation_md_paths
+        elif isinstance(annotation_md_paths, str):
+            if is_multi_model:
+                first_model = list(sentiment_pipeline.keys())[0]
+                anno_paths = {first_model: annotation_md_paths}
+            else:
+                anno_paths = {"SentimentModel": annotation_md_paths}
+                
+        for model_alias, md_path in anno_paths.items():
+            if not os.path.exists(md_path):
+                print(f"[evaluation] アノテーションファイルが見つかりません: {md_path}")
+                continue
+                
+            annotations = parse_annotated_markdown(md_path)
+            if not annotations:
+                continue
+                
+            if is_multi_model:
+                if model_alias in model_results:
+                    pred_labels = model_results[model_alias]["com_labels"]
+                else:
+                    print(f"[evaluation] 予測結果にモデル '{model_alias}' が見つかりません。")
+                    continue
+            else:
+                pred_labels = com_labels_flat
+                
+            y_true = []
+            y_pred = []
+            
+            # テキストの完全一致でアノテーションと予測結果を紐づけ
+            for text, pred_lbl in zip(all_coms_flat, pred_labels):
+                stripped_text = text.strip()
+                if stripped_text in annotations:
+                    y_true.append(annotations[stripped_text])
+                    y_pred.append(pred_lbl)
+            
+            if y_true:
+                confusion_md = generate_confusion_matrix_md(y_true, y_pred, model_alias)
+                cf_md_path = f"./confusion_matrix_{model_alias}.md"
+                try:
+                    with open(cf_md_path, "w", encoding="utf-8") as f:
+                        f.write(confusion_md)
+                    print(f"\n[{model_alias}] 混同行列 (Confusion Matrix) を保存しました: {cf_md_path}")
+                    print(confusion_md[:400] + "\n... (以下省略。詳細はファイルを確認してください)\n")
+                except Exception as e:
+                    print(f"Warning: [{model_alias}] 混同行列ファイルの書き込みに失敗しました: {e}")
+            else:
+                print(f"[evaluation] 警告: アノテーションされたテキストと今回の予測対象テキストで、一致するデータが見つかりませんでした。")
             
     return df_results
 
