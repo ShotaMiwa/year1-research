@@ -132,3 +132,53 @@ def generate_confusion_matrix_md(y_true: List[str], y_pred: List[str], model_nam
     md.append("- **F1-Score**: 適合率と再現率の調和平均。バランスの良さを示します（最大1.0）。\n")
     
     return "".join(md)
+
+
+def export_markdown_annotations_to_csv(md_path: str, csv_path: str) -> pd.DataFrame:
+    """
+    Markdownファイルからアノテーションデータを解析し、
+    CSVファイル (text, label) として保存（または上書き）します。
+    """
+    annotations = parse_annotated_markdown(md_path)
+    if not annotations:
+        print(f"[evaluation_utils] アノテーションデータが空のため、CSVの書き出しはスキップします: {md_path}")
+        return pd.DataFrame(columns=["text", "label"])
+        
+    df = pd.DataFrame(list(annotations.items()), columns=["text", "label"])
+    try:
+        # ディレクトリを作成
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        # UTF-8-SIGで日本語文字化けを防ぎつつ保存
+        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+        print(f"[evaluation_utils] アノテーションCSVを書き出しました: {csv_path} ({len(df)} 件)")
+    except Exception as e:
+        print(f"[evaluation_utils] エラー: CSV書き出しに失敗しました: {e}")
+        
+    return df
+
+
+def load_annotations_from_csv(csv_path: str) -> Dict[str, str]:
+    """
+    保存されたアノテーションCSVファイルを読み込み、
+    「コメント本文」と「正解ラベル (Positive/Neutral/Negative)」のペアの辞書を返します。
+    """
+    annotations = {}
+    if not os.path.exists(csv_path):
+        print(f"[evaluation_utils] 警告: アノテーションCSVファイルが見つかりません: {csv_path}")
+        return annotations
+        
+    try:
+        df = pd.read_csv(csv_path, encoding="utf-8-sig")
+        # 列が存在するか確認
+        if "text" in df.columns and "label" in df.columns:
+            # NaNを取り除いて辞書化
+            df = df.dropna(subset=["text", "label"])
+            annotations = dict(zip(df["text"].astype(str), df["label"].astype(str)))
+            print(f"[evaluation_utils] CSVから {len(annotations)} 件のアノテーションを読み込みました: {csv_path}")
+        else:
+            print(f"[evaluation_utils] エラー: CSVのフォーマットが正しくありません (text, label列が必要): {csv_path}")
+    except Exception as e:
+        print(f"[evaluation_utils] エラー: CSVの読み込みに失敗しました: {e}")
+        
+    return annotations
+

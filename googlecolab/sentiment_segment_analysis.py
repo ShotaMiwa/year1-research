@@ -606,7 +606,11 @@ def analyze_sentiment_by_segments(
             
     # 6. アノテーションデータ（正解ラベル）がある場合の混合行列の計算と出力
     if annotation_md_paths:
-        from evaluation_utils import parse_annotated_markdown, generate_confusion_matrix_md
+        from evaluation_utils import (
+            export_markdown_annotations_to_csv,
+            load_annotations_from_csv,
+            generate_confusion_matrix_md
+        )
         
         # 複数モデルか単一モデルかでアノテーションパスの辞書を構築
         anno_paths = {}
@@ -624,7 +628,16 @@ def analyze_sentiment_by_segments(
                 print(f"[evaluation] アノテーションファイルが見つかりません: {md_path}")
                 continue
                 
-            annotations = parse_annotated_markdown(md_path)
+            # CSVの出力パスを設定 (data/annotations_{モデル名}.csv)
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            repo_root = os.path.abspath(os.path.join(current_dir, ".."))
+            csv_path = os.path.join(repo_root, "data", f"annotations_{model_alias}.csv")
+            
+            # Markdownからアノテーションデータを解析し、CSVに書き出し/更新
+            export_markdown_annotations_to_csv(md_path, csv_path)
+            
+            # 書き出されたCSVから正解アノテーションを読み込む
+            annotations = load_annotations_from_csv(csv_path)
             if not annotations:
                 continue
                 

@@ -1,9 +1,10 @@
-data/
-!data/*.md
+data/*
 outputs/
 __pycache__/
 *.pt
 *.ckpt
 *.csv
-
 .venv/
+
+!data/*.md
+!data/annotations_*.csv
