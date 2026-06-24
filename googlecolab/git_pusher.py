@@ -45,8 +45,13 @@ def push_experiment_results(
     # 2. タイムスタンプ付きの出力先フォルダを定義
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir_name = f"run_{timestamp}"
+    
+    # git_pusher.pyの場所からリポジトリのルートパスを自動検出
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(current_dir, ".."))
+    
     # outputs/ ディレクトリ配下に作成
-    output_path = os.path.join("outputs", output_dir_name)
+    output_path = os.path.join(repo_root, "outputs", output_dir_name)
     os.makedirs(output_path, exist_ok=True)
 
     # 3. ファイルを保存先フォルダにコピー
@@ -69,28 +74,28 @@ def push_experiment_results(
         authed_url = f"https://{token}@{clean_url}"
 
         # Gitのユーザー設定（Colab環境用）
-        subprocess.run(["git", "config", "user.name", "ColabBot"], check=True)
-        subprocess.run(["git", "config", "user.email", "colab-bot@example.com"], check=True)
+        subprocess.run(["git", "config", "user.name", "ColabBot"], cwd=repo_root, check=True)
+        subprocess.run(["git", "config", "user.email", "colab-bot@example.com"], cwd=repo_root, check=True)
 
         # リモートURLの書き換え
-        subprocess.run(["git", "remote", "set-url", "origin", authed_url], check=True)
+        subprocess.run(["git", "remote", "set-url", "origin", authed_url], cwd=repo_root, check=True)
 
         # 最新変更を pull --rebase して競合を回避
         print(f"[git_pusher] 最新のリモートブランチ '{branch}' からリベースプルを実行中...")
-        subprocess.run(["git", "pull", "--rebase", "origin", branch], check=True)
+        subprocess.run(["git", "pull", "--rebase", "origin", branch], cwd=repo_root, check=True)
 
         # outputs フォルダを追加
         print(f"[git_pusher] 変更をインデックスに追加中...")
-        subprocess.run(["git", "add", "outputs/"], check=True)
+        subprocess.run(["git", "add", "outputs/"], cwd=repo_root, check=True)
 
         # コミット
         full_commit_msg = f"{commit_message} {timestamp}"
         print(f"[git_pusher] コミットを実行中: '{full_commit_msg}'")
-        subprocess.run(["git", "commit", "-m", full_commit_msg], check=True)
+        subprocess.run(["git", "commit", "-m", full_commit_msg], cwd=repo_root, check=True)
 
         # プッシュ
         print(f"[git_pusher] リモートブランチ '{branch}' へプッシュ中...")
-        subprocess.run(["git", "push", "origin", f"HEAD:{branch}"], check=True)
+        subprocess.run(["git", "push", "origin", f"HEAD:{branch}"], cwd=repo_root, check=True)
         
         print(f"\n[git_pusher] ★ 実験結果のGitHub自動保存が完了しました！ ({output_path})")
 
