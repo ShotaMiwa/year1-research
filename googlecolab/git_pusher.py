@@ -84,9 +84,9 @@ def push_experiment_results(
         print(f"[git_pusher] 最新のリモートブランチ '{branch}' からリベースプルを実行中...")
         subprocess.run(["git", "pull", "--rebase", "origin", branch], cwd=repo_root, check=True)
 
-        # outputs フォルダを追加
+        # outputs フォルダを追加 (gitignoreされているため強制追加 -f を使用)
         print(f"[git_pusher] 変更をインデックスに追加中...")
-        subprocess.run(["git", "add", "outputs/"], cwd=repo_root, check=True)
+        subprocess.run(["git", "add", "-f", "outputs/"], cwd=repo_root, check=True)
 
         # コミット
         full_commit_msg = f"{commit_message} {timestamp}"
