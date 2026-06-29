@@ -1,7 +1,14 @@
 import os
 import sys
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 from typing import Dict, List
+
+try:
+    import japanize_matplotlib
+except ImportError:
+    pass
 
 # パスの設定
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -9,6 +16,46 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, "googlecolab"))
 
 from evaluation_utils import export_markdown_annotations_to_csv, generate_confusion_matrix_md
+
+def plot_confusion_matrix(y_true: List[str], y_pred: List[str], classes: List[str], save_path: str, title: str):
+    """
+    混同行列を論文風の美しいヒートマップ画像として出力・保存します。
+    """
+    matrix = np.zeros((len(classes), len(classes)), dtype=int)
+    class_to_idx = {c: i for i, c in enumerate(classes)}
+    for t, p in zip(y_true, y_pred):
+        if t in class_to_idx and p in class_to_idx:
+            matrix[class_to_idx[t], class_to_idx[p]] += 1
+            
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(matrix, interpolation='nearest', cmap=plt.cm.Blues)
+    ax.figure.colorbar(im, ax=ax)
+    
+    # 軸の設定
+    ax.set(xticks=np.arange(matrix.shape[1]),
+           yticks=np.arange(matrix.shape[0]),
+           xticklabels=classes, yticklabels=classes,
+           title=title,
+           ylabel='True Label',
+           xlabel='Predicted Label')
+           
+    # テキストの配置
+    thresh = matrix.max() / 2.
+    for i in range(matrix.shape[0]):
+        for j in range(matrix.shape[1]):
+            val = matrix[i, j]
+            # 割合も計算する (その行の合計に対する割合)
+            row_sum = matrix[i].sum()
+            percent_str = f"\n({val / row_sum * 100:.1f}%)" if row_sum > 0 else ""
+            ax.text(j, i, f"{val}{percent_str}",
+                    ha="center", va="center",
+                    color="white" if matrix[i, j] > thresh else "black",
+                    fontsize=12)
+                    
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
 def calculate_accuracy_metrics(df: pd.DataFrame) -> Dict:
     """
@@ -43,12 +90,14 @@ def run_evaluation():
         "日本語BERT": {
             "md_path": os.path.join(current_dir, "data", "BERT-日本語.md"),
             "csv_path": os.path.join(current_dir, "data", "annotations_日本語BERT.csv"),
-            "report_path": os.path.join(current_dir, "data", "evaluation_report_日本語BERT.md")
+            "report_path": os.path.join(current_dir, "data", "evaluation_report_日本語BERT.md"),
+            "png_path": os.path.join(current_dir, "outputs", "confusion_matrix_日本語BERT.png")
         },
         "多言語XLM-R": {
             "md_path": os.path.join(current_dir, "data", "sentiment_samples_多言語XLM-R.md"),
             "csv_path": os.path.join(current_dir, "data", "annotations_多言語XLM-R.csv"),
-            "report_path": os.path.join(current_dir, "data", "evaluation_report_多言語XLM-R.md")
+            "report_path": os.path.join(current_dir, "data", "evaluation_report_多言語XLM-R.md"),
+            "png_path": os.path.join(current_dir, "outputs", "confusion_matrix_多言語XLM-R.png")
         }
     }
 
@@ -99,6 +148,12 @@ def run_evaluation():
         y_true = df["label"].tolist()
         y_pred = df["pred_label"].tolist()
         confusion_md = generate_confusion_matrix_md(y_true, y_pred, model_name)
+
+        # 混合行列を画像としてプロット・保存
+        classes = ["Positive", "Neutral", "Negative"]
+        model_name_en = "Japanese BERT" if model_name == "日本語BERT" else "Multilingual XLM-R"
+        plot_confusion_matrix(y_true, y_pred, classes, paths["png_path"], f"Confusion Matrix - {model_name_en}")
+        print(f"  ● 混合行列画像を保存しました: {paths['png_path']}")
 
         # 評価レポート用Markdownの構築
         report_content = []
