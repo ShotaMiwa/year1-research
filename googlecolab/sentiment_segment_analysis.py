@@ -294,7 +294,7 @@ def analyze_sentiment_by_segments(
     min_sentence_length: int = 6,
     disagreement_csv_path: str = "sentiment_disagreements.csv",
     cache_dir: str = None,
-    annotation_md_paths: Dict[str, str] = None
+    annotation_csv_paths: Dict[str, str] = None
 ) -> pd.DataFrame:
     """
     YouTube動画の字幕とコメントを取得し、各セグメントに分類して感情分析比率を計算します。
@@ -605,38 +605,29 @@ def analyze_sentiment_by_segments(
             print("すべてのデータでモデル間の判定が一致しました。")
             
     # 6. アノテーションデータ（正解ラベル）がある場合の混合行列の計算と出力
-    if annotation_md_paths:
+    if annotation_csv_paths:
         from evaluation_utils import (
-            export_markdown_annotations_to_csv,
             load_annotations_from_csv,
             generate_confusion_matrix_md
         )
         
         # 複数モデルか単一モデルかでアノテーションパスの辞書を構築
-        anno_paths = {}
-        if isinstance(annotation_md_paths, dict):
-            anno_paths = annotation_md_paths
-        elif isinstance(annotation_md_paths, str):
+        csv_paths = {}
+        if isinstance(annotation_csv_paths, dict):
+            csv_paths = annotation_csv_paths
+        elif isinstance(annotation_csv_paths, str):
             if is_multi_model:
                 first_model = list(sentiment_pipeline.keys())[0]
-                anno_paths = {first_model: annotation_md_paths}
+                csv_paths = {first_model: annotation_csv_paths}
             else:
-                anno_paths = {"SentimentModel": annotation_md_paths}
+                csv_paths = {"SentimentModel": annotation_csv_paths}
                 
-        for model_alias, md_path in anno_paths.items():
-            if not os.path.exists(md_path):
-                print(f"[evaluation] アノテーションファイルが見つかりません: {md_path}")
+        for model_alias, csv_path in csv_paths.items():
+            if not os.path.exists(csv_path):
+                print(f"[evaluation] アノテーションCSVファイルが見つかりません: {csv_path}")
                 continue
                 
-            # CSVの出力パスを設定 (data/annotations_{モデル名}.csv)
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            repo_root = os.path.abspath(os.path.join(current_dir, ".."))
-            csv_path = os.path.join(repo_root, "data", f"annotations_{model_alias}.csv")
-            
-            # Markdownからアノテーションデータを解析し、CSVに書き出し/更新
-            export_markdown_annotations_to_csv(md_path, csv_path)
-            
-            # 書き出されたCSVから正解アノテーションを読み込む
+            # CSVから正解アノテーションを直接読み込む
             annotations = load_annotations_from_csv(csv_path)
             if not annotations:
                 continue
@@ -724,13 +715,21 @@ if __name__ == "__main__":
     }
     
     # 3. 実行（テストのためコメント取得はオフにすることも可能）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(current_dir, ".."))
+    annotation_csv_paths = {
+        "日本語BERT": os.path.join(repo_root, "data", "annotations_日本語BERT.csv"),
+        "多言語XLM-R": os.path.join(repo_root, "data", "annotations_多言語XLM-R.csv")
+    }
+
     df_results = analyze_sentiment_by_segments(
         video_url=TEST_URL,
         segments=segments,
         sentiment_pipeline=models, # 辞書を渡して比較実行
         enable_comments=True,
         min_sentence_length=6,
-        disagreement_csv_path="./sentiment_disagreements.csv"
+        disagreement_csv_path="./sentiment_disagreements.csv",
+        annotation_csv_paths=annotation_csv_paths
     )
     
     # 4. 結果の出力
