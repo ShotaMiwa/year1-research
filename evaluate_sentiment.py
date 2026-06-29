@@ -81,6 +81,7 @@ def calculate_accuracy_metrics(df: pd.DataFrame) -> Dict:
         t_total = len(tier_df)
         results['tiers'][t] = {
             'accuracy': t_correct / t_total if t_total > 0 else 0.0,
+            'correct': t_correct,
             'total': t_total
         }
     return results
@@ -90,13 +91,13 @@ def run_evaluation():
         "日本語BERT": {
             "md_path": os.path.join(current_dir, "data", "BERT-日本語.md"),
             "csv_path": os.path.join(current_dir, "data", "annotations_日本語BERT.csv"),
-            "report_path": os.path.join(current_dir, "data", "evaluation_report_日本語BERT.md"),
+            "report_path": os.path.join(current_dir, "outputs", "evaluation_report_日本語BERT.md"),
             "png_path": os.path.join(current_dir, "outputs", "confusion_matrix_日本語BERT.png")
         },
         "多言語XLM-R": {
             "md_path": os.path.join(current_dir, "data", "sentiment_samples_多言語XLM-R.md"),
             "csv_path": os.path.join(current_dir, "data", "annotations_多言語XLM-R.csv"),
-            "report_path": os.path.join(current_dir, "data", "evaluation_report_多言語XLM-R.md"),
+            "report_path": os.path.join(current_dir, "outputs", "evaluation_report_多言語XLM-R.md"),
             "png_path": os.path.join(current_dir, "outputs", "confusion_matrix_多言語XLM-R.png")
         }
     }
@@ -138,11 +139,11 @@ def run_evaluation():
 
         # ターミナル表示
         print(f"\n[2] 評価結果:")
-        print(f"  ● 全体サンプル数: {metrics['overall_total']} 件")
-        print(f"  ● 全体正解率 (Accuracy): {metrics['overall_accuracy'] * 100:.2f}%")
+        overall_correct = (df['label'] == df['pred_label']).sum()
+        print(f"  ● 全体正解率 (Accuracy): {metrics['overall_accuracy'] * 100:.2f}% ({overall_correct}/{metrics['overall_total']} 件)")
         print("\n  ● 層(Tier)ごとの正解率:")
         for t, data in metrics['tiers'].items():
-            print(f"    - {t}: {data['accuracy'] * 100:.2f}% (サンプル数: {data['total']} 件)")
+            print(f"    - {t}: {data['accuracy'] * 100:.2f}% ({data['correct']}/{data['total']} 件)")
 
         # 混合行列のMarkdownテキストを生成
         y_true = df["label"].tolist()
@@ -156,17 +157,17 @@ def run_evaluation():
         print(f"  ● 混合行列画像を保存しました: {paths['png_path']}")
 
         # 評価レポート用Markdownの構築
+        overall_correct = (df['label'] == df['pred_label']).sum()
         report_content = []
         report_content.append(f"# 感情分析 評価詳細レポート - {model_name}\n\n")
         report_content.append("## ■ 正解率サマリー\n\n")
-        report_content.append(f"- **全体サンプル数**: {metrics['overall_total']} 件\n")
-        report_content.append(f"- **全体正解率 (Accuracy)**: **{metrics['overall_accuracy'] * 100:.2f}%**\n\n")
+        report_content.append(f"- **全体正解率 (Accuracy)**: **{metrics['overall_accuracy'] * 100:.2f}%** ({overall_correct}/{metrics['overall_total']} 件)\n\n")
         
         report_content.append("### ● 層（Tier）ごとの正解率\n\n")
-        report_content.append("| 確信度層 | 正解率 (Accuracy) | サンプル数 |\n")
+        report_content.append("| 確信度層 | 正解率 (Accuracy) | 正解数/合計 (サンプル数) |\n")
         report_content.append("| :--- | :---: | :---: |\n")
         for t, data in metrics['tiers'].items():
-            report_content.append(f"| {t} | {data['accuracy'] * 100:.2f}% | {data['total']} |\n")
+            report_content.append(f"| {t} | {data['accuracy'] * 100:.2f}% | {data['correct']}/{data['total']} |\n")
         report_content.append("\n---\n\n")
         
         # 混合行列と評価指標
