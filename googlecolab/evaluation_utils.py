@@ -134,17 +134,75 @@ def generate_confusion_matrix_md(y_true: List[str], y_pred: List[str], model_nam
     return "".join(md)
 
 
+def parse_annotated_markdown_extended(md_path: str) -> List[Dict[str, str]]:
+    """
+    手動アノテーションされたMarkdownファイルを読み込み、
+    「コメント本文(text)」「正解ラベル(label)」「モデル予測ラベル(pred_label)」「確信度層(tier)」
+    のリストを返します。
+    """
+    records = []
+    if not os.path.exists(md_path):
+        print(f"[evaluation_utils] 警告: アノテーションファイルが見つかりません: {md_path}")
+        return records
+
+    label_map = {
+        "1": "Positive",
+        "2": "Neutral",
+        "3": "Negative"
+    }
+
+    # 層の正規表現 (例: "## ■ 層1：0.33 以上 0.50 未満 （低確信度）")
+    tier_pattern = re.compile(r'^##\s*■\s*(層\d+)')
+    # 予測ラベルの正規表現 (例: "### ● Positive (最大30件)")
+    pred_pattern = re.compile(r'^###\s*●\s*(Positive|Neutral|Negative)')
+    # コメントとアノテーションの正規表現 (例: "   > おっおー！こんばんは♪ 1")
+    comment_pattern = re.compile(r'^\s*>\s*(.+?)\s+([123])\s*$')
+
+    current_tier = "不明"
+    current_pred = "不明"
+
+    print(f"[evaluation_utils] アノテーションファイル（詳細）を解析中: {md_path}")
+    try:
+        with open(md_path, "r", encoding="utf-8") as f:
+            for line in f:
+                tier_match = tier_pattern.match(line)
+                if tier_match:
+                    current_tier = tier_match.group(1).strip()
+                    continue
+
+                pred_match = pred_pattern.match(line)
+                if pred_match:
+                    current_pred = pred_match.group(1).strip()
+                    continue
+
+                comment_match = comment_pattern.match(line)
+                if comment_match:
+                    text = comment_match.group(1).strip()
+                    label_code = comment_match.group(2)
+                    records.append({
+                        "text": text,
+                        "label": label_map[label_code],
+                        "pred_label": current_pred,
+                        "tier": current_tier
+                    })
+        print(f"[evaluation_utils] 解析完了。アノテーション数: {len(records)} 件")
+    except Exception as e:
+        print(f"[evaluation_utils] エラー: ファイル解析に失敗しました: {e}")
+        
+    return records
+
+
 def export_markdown_annotations_to_csv(md_path: str, csv_path: str) -> pd.DataFrame:
     """
     Markdownファイルからアノテーションデータを解析し、
-    CSVファイル (text, label) として保存（または上書き）します。
+    拡張CSVファイル (text, label, pred_label, tier) として保存（または上書き）します。
     """
-    annotations = parse_annotated_markdown(md_path)
-    if not annotations:
+    records = parse_annotated_markdown_extended(md_path)
+    if not records:
         print(f"[evaluation_utils] アノテーションデータが空のため、CSVの書き出しはスキップします: {md_path}")
-        return pd.DataFrame(columns=["text", "label"])
+        return pd.DataFrame(columns=["text", "label", "pred_label", "tier"])
         
-    df = pd.DataFrame(list(annotations.items()), columns=["text", "label"])
+    df = pd.DataFrame(records)
     try:
         # ディレクトリを作成
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
