@@ -519,6 +519,176 @@ def plot_scatter_and_groups(df_merged):
     return df_merged
 
 
+def analyze_clustering(df_merged):
+    """ヒートマップ値と満足度スコアに対するクラスタリング分析（階層的 & K-Means）"""
+    print("\n── クラスタリング分析の実行 ─────────────────────────")
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans
+    from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
+
+    satisfaction_col = "この動画に満足した"
+    colors_list = ["#2ecc71", "#3498db", "#e74c3c", "#f1c40f", "#9b59b6", "#e67e22"]
+
+    # 分析対象のペア (平均値ベース, 最大値ベース)
+    for label, col_name, file_suffix in [("平均", "平均ヒートマップ値", "mean"), ("最大", "最大ヒートマップ値", "max")]:
+        print(f"\n[ {label}ヒートマップ値ベースのクラスタリング ]")
+        
+        # データの抽出と標準化
+        features = df_merged[[col_name, satisfaction_col]].copy()
+        scaler = StandardScaler()
+        scaled_features = scaler.fit_transform(features)
+        
+        # 1. 階層的クラスタリング（ウォード法）のデンドログラム描画
+        fig, ax = plt.subplots(figsize=(10, 6))
+        Z = linkage(scaled_features, method="ward")
+        dendrogram(
+            Z,
+            labels=df_merged["セグメント"].values,
+            color_threshold=None,
+            ax=ax
+        )
+        ax.set_title(f"階層的クラスタリング デンドログラム ({label}値ベース)", fontsize=14, pad=15)
+        ax.set_xlabel("セグメント番号", fontsize=12)
+        ax.set_ylabel("結合距離（ウォード法）", fontsize=12)
+        plt.tight_layout()
+        dendrogram_path = DATA_DIR / f"dendrogram_{file_suffix}.png"
+        fig.savefig(dendrogram_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  - デンドログラムを保存: {dendrogram_path}")
+
+        # 2. K-Means のエルボー法
+        sse = []
+        k_list = range(1, min(11, len(df_merged)))
+        for k in k_list:
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+            kmeans.fit(scaled_features)
+            sse.append(kmeans.inertia_)
+            
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(k_list, sse, marker="o", linestyle="-", color="#2c3e50")
+        ax.set_title(f"K-Means エルボー曲線 ({label}値ベース)", fontsize=14, pad=15)
+        ax.set_xlabel("クラスタ数 K", fontsize=12)
+        ax.set_ylabel("インinertia (SSE)", fontsize=12)
+        ax.set_xticks(k_list)
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        elbow_path = DATA_DIR / f"elbow_curve_{file_suffix}.png"
+        fig.savefig(elbow_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  - エルボー曲線を保存: {elbow_path}")
+
+        # 3. 代表的なクラスタ数 (K=3, 4) でのクラスタリング適用とプロット
+        for k_clusters in [3, 4]:
+            # 階層的クラスタリングのクラスタ割り当て
+            hc_labels = fcluster(Z, t=k_clusters, criterion="maxclust")
+            
+            # K-Meansのクラスタ割り当て
+            kmeans = KMeans(n_clusters=k_clusters, random_state=42, n_init=10)
+            km_labels = kmeans.fit_predict(scaled_features) + 1  # 1-indexed
+            
+            # グラフプロット (階層的クラスタリング結果)
+            fig, ax = plt.subplots(figsize=(10, 8))
+            unique_labels = sorted(list(set(hc_labels)))
+            
+            for i, cluster_id in enumerate(unique_labels):
+                mask = hc_labels == cluster_id
+                color = colors_list[i % len(colors_list)]
+                ax.scatter(
+                    features.loc[mask, col_name],
+                    features.loc[mask, satisfaction_col],
+                    label=f"クラスタ {cluster_id}",
+                    c=color,
+                    s=120,
+                    edgecolors="white",
+                    linewidth=1.5,
+                    zorder=5
+                )
+                # セグメント番号のラベル付け
+                for _, row in df_merged[mask].iterrows():
+                    ax.annotate(
+                        str(int(row["セグメント"])),
+                        (row[col_name], row[satisfaction_col]),
+                        textcoords="offset points",
+                        xytext=(6, 6),
+                        fontsize=9,
+                        color=color,
+                        fontweight="bold"
+                    )
+            
+            ax.set_xlabel(col_name, fontsize=12)
+            ax.set_ylabel("総合満足度（平均スコア）", fontsize=12)
+            ax.set_title(f"セグメント別: {col_name} × 総合満足度\n(階層的クラスタリング Ward法, K={k_clusters})", fontsize=14, pad=15)
+            ax.legend(loc="upper left")
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            hc_scatter_path = DATA_DIR / f"scatter_hc_{file_suffix}_k{k_clusters}.png"
+            fig.savefig(hc_scatter_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            print(f"  - 階層的 (K={k_clusters}) 散布図を保存: {hc_scatter_path}")
+            
+            # グラフプロット (K-Means結果)
+            fig, ax = plt.subplots(figsize=(10, 8))
+            unique_labels_km = sorted(list(set(km_labels)))
+            
+            for i, cluster_id in enumerate(unique_labels_km):
+                mask = km_labels == cluster_id
+                color = colors_list[i % len(colors_list)]
+                ax.scatter(
+                    features.loc[mask, col_name],
+                    features.loc[mask, satisfaction_col],
+                    label=f"クラスタ {cluster_id}",
+                    c=color,
+                    s=120,
+                    edgecolors="white",
+                    linewidth=1.5,
+                    zorder=5
+                )
+                # セグメント番号のラベル付け
+                for _, row in df_merged[mask].iterrows():
+                    ax.annotate(
+                        str(int(row["セグメント"])),
+                        (row[col_name], row[satisfaction_col]),
+                        textcoords="offset points",
+                        xytext=(6, 6),
+                        fontsize=9,
+                        color=color,
+                        fontweight="bold"
+                    )
+            
+            # K-Means セントロイドの描画
+            centroids_scaled = kmeans.cluster_centers_
+            centroids = scaler.inverse_transform(centroids_scaled)
+            ax.scatter(
+                centroids[:, 0],
+                centroids[:, 1],
+                marker="X",
+                s=200,
+                color="black",
+                label="セントロイド(重心)",
+                zorder=10
+            )
+            
+            ax.set_xlabel(col_name, fontsize=12)
+            ax.set_ylabel("総合満足度（平均スコア）", fontsize=12)
+            ax.set_title(f"セグメント別: {col_name} × 総合満足度\n(K-Meansクラスタリング, K={k_clusters})", fontsize=14, pad=15)
+            ax.legend(loc="upper left")
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            km_scatter_path = DATA_DIR / f"scatter_kmeans_{file_suffix}_k{k_clusters}.png"
+            fig.savefig(km_scatter_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            print(f"  - K-Means (K={k_clusters}) 散布図を保存: {km_scatter_path}")
+            
+            # 結果を CSV 用に保存
+            df_merged[f"クラスタ_階層_{label}_K{k_clusters}"] = hc_labels
+            df_merged[f"クラスタ_KMeans_{label}_K{k_clusters}"] = km_labels
+
+    # 結合データの更新保存
+    df_merged.to_csv(MERGED_PATH, index=False, encoding="utf-8-sig")
+    print(f"\n✅ クラスタリング結果を結合したCSVを保存: {MERGED_PATH}")
+    return df_merged
+
+
 # ═══════════════════════════════════════════════════════════
 # メイン
 # ═══════════════════════════════════════════════════════════
@@ -549,6 +719,7 @@ def main():
     df_corr = compute_correlations(df_merged)
     plot_correlation_heatmap(df_merged)
     df_merged = plot_scatter_and_groups(df_merged)
+    df_merged = analyze_clustering(df_merged)
 
     print("\n" + "=" * 70)
     print("  分析完了！")
@@ -559,7 +730,13 @@ def main():
               DATA_DIR / "correlation_matrix_pearson.png",
               DATA_DIR / "correlation_matrix_spearman.png",
               DATA_DIR / "scatter_heatmap_mean_satisfaction.png",
-              DATA_DIR / "scatter_heatmap_max_satisfaction.png"]:
+              DATA_DIR / "scatter_heatmap_max_satisfaction.png",
+              DATA_DIR / "dendrogram_mean.png",
+              DATA_DIR / "elbow_curve_mean.png",
+              DATA_DIR / "scatter_hc_mean_k3.png",
+              DATA_DIR / "scatter_hc_mean_k4.png",
+              DATA_DIR / "scatter_kmeans_mean_k3.png",
+              DATA_DIR / "scatter_kmeans_mean_k4.png"]:
         exists = "✅" if p.exists() else "❌"
         print(f"  {exists} {p}")
 
