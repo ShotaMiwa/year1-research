@@ -1,0 +1,17 @@
+feature_pattern,feature_desc,num_features,model_name,accuracy,balanced_accuracy,f1_macro,recall_low_c0,recall_high_c1,roc_auc
+Pattern1_All13,"comment_rate, grass_ratio, question_ratio, exclamation_ratio, sentiment_polarity, subtitle_sentiment_polarity, pause_ratio, speech_rate, sub_comment_similarity, comment_semantic_variance, hm_mean, hm_max, hm_volatility",13,Dummy_Majority,0.6086956521739131,0.5,0.3783783783783784,0.0,1.0,0.5
+Pattern1_All13,"comment_rate, grass_ratio, question_ratio, exclamation_ratio, sentiment_polarity, subtitle_sentiment_polarity, pause_ratio, speech_rate, sub_comment_similarity, comment_semantic_variance, hm_mean, hm_max, hm_volatility",13,LogisticRegression,0.6521739130434783,0.6150793650793651,0.6166666666666667,0.4444444444444444,0.7857142857142857,0.626984126984127
+Pattern1_All13,"comment_rate, grass_ratio, question_ratio, exclamation_ratio, sentiment_polarity, subtitle_sentiment_polarity, pause_ratio, speech_rate, sub_comment_similarity, comment_semantic_variance, hm_mean, hm_max, hm_volatility",13,SVC_RBF,0.5217391304347826,0.42857142857142855,0.34285714285714286,0.0,0.8571428571428571,0.07142857142857144
+Pattern1_All13,"comment_rate, grass_ratio, question_ratio, exclamation_ratio, sentiment_polarity, subtitle_sentiment_polarity, pause_ratio, speech_rate, sub_comment_similarity, comment_semantic_variance, hm_mean, hm_max, hm_volatility",13,RandomForest,0.5217391304347826,0.48809523809523814,0.486815415821501,0.3333333333333333,0.6428571428571429,0.4761904761904762
+Pattern2_SelectedA_2d,"question_ratio, pause_ratio",2,Dummy_Majority,0.6086956521739131,0.5,0.3783783783783784,0.0,1.0,0.5
+Pattern2_SelectedA_2d,"question_ratio, pause_ratio",2,LogisticRegression,0.6086956521739131,0.5595238095238095,0.5548387096774194,0.3333333333333333,0.7857142857142857,0.6904761904761905
+Pattern2_SelectedA_2d,"question_ratio, pause_ratio",2,SVC_RBF,0.391304347826087,0.32142857142857145,0.28125,0.0,0.6428571428571429,0.05555555555555558
+Pattern2_SelectedA_2d,"question_ratio, pause_ratio",2,RandomForest,0.6956521739130435,0.6706349206349207,0.6734279918864097,0.5555555555555556,0.7857142857142857,0.6904761904761905
+Pattern3_SelectedB_4d,"subtitle_sentiment_polarity, hm_volatility, hm_mean, comment_rate",4,Dummy_Majority,0.6086956521739131,0.5,0.3783783783783784,0.0,1.0,0.5
+Pattern3_SelectedB_4d,"subtitle_sentiment_polarity, hm_volatility, hm_mean, comment_rate",4,LogisticRegression,0.43478260869565216,0.35714285714285715,0.30303030303030304,0.0,0.7142857142857143,0.14285714285714285
+Pattern3_SelectedB_4d,"subtitle_sentiment_polarity, hm_volatility, hm_mean, comment_rate",4,SVC_RBF,0.6086956521739131,0.5,0.3783783783783784,0.0,1.0,0.5555555555555556
+Pattern3_SelectedB_4d,"subtitle_sentiment_polarity, hm_volatility, hm_mean, comment_rate",4,RandomForest,0.5652173913043478,0.503968253968254,0.48660714285714285,0.2222222222222222,0.7857142857142857,0.3492063492063492
+Pattern4_PCA_2d,"PCA (PC1, PC2 from 13 feats)",2,Dummy_Majority,0.6086956521739131,0.5,0.3783783783783784,0.0,1.0,0.5
+Pattern4_PCA_2d,"PCA (PC1, PC2 from 13 feats)",2,LogisticRegression,0.5652173913043478,0.5238095238095238,0.5208333333333333,0.3333333333333333,0.7142857142857143,0.5634920634920635
+Pattern4_PCA_2d,"PCA (PC1, PC2 from 13 feats)",2,SVC_RBF,0.5217391304347826,0.42857142857142855,0.34285714285714286,0.0,0.8571428571428571,0.15873015873015872
+Pattern4_PCA_2d,"PCA (PC1, PC2 from 13 feats)",2,RandomForest,0.4782608695652174,0.43253968253968256,0.425,0.2222222222222222,0.6428571428571429,0.3492063492063492

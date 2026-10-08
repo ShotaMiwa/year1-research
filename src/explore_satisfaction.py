@@ -19,15 +19,19 @@ from pathlib import Path
 
 plt.rcParams["axes.unicode_minus"] = False
 
-# ── パス設定（相対パスでプロジェクトルートを解決） ──────────────────
-SRC_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SRC_DIR.parent
-DATA_DIR = PROJECT_ROOT / "data" / "analysis_questionnaire"
-OUT_DIR = DATA_DIR / "explore_satisfaction"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+from src.utils.config import (
+    init_directories,
+    DATA_PROCESSED_DIR,
+    OUT_CORRELATION_DIR,
+    OUT_SATISFACTION_DIR
+)
 
-MERGED_CSV = DATA_DIR / "merged_survey_heatmap.csv"
-GROUP_CSV  = DATA_DIR / "group_quantitative_comparison.csv"
+# ディレクトリ初期化
+init_directories()
+
+OUT_DIR = OUT_SATISFACTION_DIR
+MERGED_CSV = DATA_PROCESSED_DIR / "merged_survey_heatmap.csv"
+GROUP_CSV  = OUT_CORRELATION_DIR / "group_quantitative_comparison.csv"
 
 # ── データ読み込み ──────────────────────────────────────────
 df = pd.read_csv(MERGED_CSV)

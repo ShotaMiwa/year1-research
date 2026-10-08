@@ -1,0 +1,7 @@
+﻿feature,feature_key,target,target_key,pearson_r,spearman_rho,diff,note
+ヒートマップ変動性,hm_volatility,リラックス・気軽さ,Factor_Relaxation,0.186,0.549,0.362,非線形性または外れ値影響の疑いあり
+コメント密度(件/秒),comment_rate,総合満足度,Target_Satisfaction,-0.256,-0.473,0.217,非線形性または外れ値影響の疑いあり
+草・笑い率,grass_ratio,社会的共有性,Factor_SocialShare,0.203,0.009,0.194,非線形性または外れ値影響の疑いあり
+コメント密度(件/秒),comment_rate,情報性・学習価値,Factor_Information,-0.067,-0.233,0.166,非線形性または外れ値影響の疑いあり
+ヒートマップ変動性,hm_volatility,娯楽性・没頭感,Factor_Entertainment,0.359,0.523,0.164,非線形性または外れ値影響の疑いあり
+ヒートマップ変動性,hm_volatility,総合満足度,Target_Satisfaction,0.082,0.245,0.163,非線形性または外れ値影響の疑いあり

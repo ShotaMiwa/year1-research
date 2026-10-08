@@ -1,0 +1,5 @@
+model,direction,n_optimal,selected
+LogisticRegression,forward,3,"comment_rate, question_ratio, speech_rate"
+LogisticRegression,backward,3,"question_ratio, speech_rate, hm_mean"
+RandomForest,forward,3,"question_ratio, sentiment_polarity, hm_mean"
+RandomForest,backward,3,"grass_ratio, hm_mean, comment_semantic_variance"

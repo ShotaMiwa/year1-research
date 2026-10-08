@@ -1,0 +1,15 @@
+selection_method,eval_model,n_features,features,acc,bal_acc,f1_macro,recall_low,roc_auc
+RFECV(LogisticRegression),LogisticRegression,3,"question_ratio, speech_rate, pause_ratio",0.7391,0.7262,0.7262,0.6667,0.7698
+RFECV(LogisticRegression),RandomForest,3,"question_ratio, speech_rate, pause_ratio",0.5652,0.504,0.4866,0.2222,0.6587
+RFECV(RandomForest),LogisticRegression,3,"question_ratio, speech_rate, comment_semantic_variance",0.6957,0.6706,0.6734,0.5556,0.6905
+RFECV(RandomForest),RandomForest,3,"question_ratio, speech_rate, comment_semantic_variance",0.6522,0.6151,0.6167,0.4444,0.6349
+SFS-Forward(LogisticRegression),LogisticRegression,3,"comment_rate, question_ratio, speech_rate",0.6957,0.6508,0.6538,0.4444,0.6429
+SFS-Forward(LogisticRegression),RandomForest,3,"comment_rate, question_ratio, speech_rate",0.6957,0.631,0.6247,0.3333,0.5952
+SFS-Backward(LogisticRegression),LogisticRegression,3,"question_ratio, speech_rate, hm_mean",0.7391,0.7063,0.7125,0.5556,0.7063
+SFS-Backward(LogisticRegression),RandomForest,3,"question_ratio, speech_rate, hm_mean",0.6522,0.6151,0.6167,0.4444,0.5476
+SFS-Forward(RandomForest),LogisticRegression,3,"question_ratio, sentiment_polarity, hm_mean",0.8696,0.8333,0.8516,0.6667,0.7857
+SFS-Forward(RandomForest),RandomForest,3,"question_ratio, sentiment_polarity, hm_mean",0.6957,0.6706,0.6734,0.5556,0.5833
+SFS-Backward(RandomForest),LogisticRegression,3,"grass_ratio, hm_mean, comment_semantic_variance",0.4783,0.3929,0.3235,0.0,0.4365
+SFS-Backward(RandomForest),RandomForest,3,"grass_ratio, hm_mean, comment_semantic_variance",0.6087,0.5595,0.5548,0.3333,0.5437
+事前仮説(相関上位2個),LogisticRegression,2,"question_ratio, pause_ratio",0.6957,0.6706,0.6731,0.5556,0.6984
+全78ペア最良,LogisticRegression,2,"question_ratio, speech_rate",0.7826,0.7421,0.7531,0.5556,0.7302

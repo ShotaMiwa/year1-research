@@ -1,10 +1,30 @@
-data/*
-outputs/
+# Python仮想環境およびキャッシュ
+.venv/
 __pycache__/
 *.pt
 *.ckpt
-*.csv
-.venv/
 
-!data/*.md
-!data/annotations_*.csv
+# Windowsメタデータ
+*:Zone.Identifier
+
+# プライバシー・個人情報保護（アンケート生データ・協力者情報）
+ライブ配信動画に関する予備調査アンケート/
+実験報告書類/
+
+# 個人論文・原稿
+*.docx
+*.pdf
+*論文*
+
+# 個人専用作業フォルダ
+src/三輪昇汰/
+
+# 出力物一時フォルダ
+outputs/
+
+# データディレクトリのルール
+# rawデータ・processedデータを追跡対象にし、持ち運び先PCでの再現性を担保
+!data/raw/
+!data/raw/**
+!data/processed/
+!data/processed/**
