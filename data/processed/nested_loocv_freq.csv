@@ -1,0 +1,13 @@
+feature,count,rate
+question_ratio,21,0.913
+sentiment_polarity,16,0.696
+speech_rate,7,0.304
+hm_mean,7,0.304
+pause_ratio,5,0.217
+sub_comment_similarity,5,0.217
+comment_rate,3,0.13
+comment_semantic_variance,3,0.13
+exclamation_ratio,2,0.087
+subtitle_sentiment_polarity,0,0.0
+grass_ratio,0,0.0
+hm_max,0,0.0
