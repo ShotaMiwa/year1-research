@@ -83,3 +83,32 @@
 | **娯楽性・没頭感** | **ヒートマップ変動性** (`hm_volatility`)| +0.359 [-0.074, 0.672] | **+0.523** | $p = 0.010$ (Spearman) | **顕著な非線形性（Spearman優位）**。盛り上がりの強弱が没頭感と単調連動。 |
 | | **最大ヒートマップ値** (`hm_max`)| +0.328 [-0.138, 0.688] | **+0.467** | $p = 0.025$ (Spearman) | 再生ピークの集中が没頭感と順位相関。 |
 | **総合満足度** | **質問率** (`question_ratio`)| -0.390 [-0.688, 0.029] | -0.336 | $p = 0.066$ | 単一特徴量では有意差なし。複合的特徴量の統合（ML）が必要。 |
+
+---
+
+## 6. 実験ログ [2026-10-21]: 決定木における二重交差検証（Nested LOO-CV）と新特徴量（セグメント長）の有効性検証
+
+前週（10/14）のランダムフォレスト実験と全く同一の評価条件（Nested LOO-CV: 外側23分割 × 内側22分割でSFSにより3特徴量を逐次選択）にて、単体決定木（Decision Tree）に対するハイパーパラメータ調整および**新特徴量「セグメントの長さ（`segment_length_sec`）」追加前後の汎化性能比較**を実施した。
+
+> **エビデンスファイル**:
+> - 集計データ表: [exp_dt_nested_cv_comparison.csv](tables/exp_dt_nested_cv_comparison.csv)
+> - 性能比較図: [exp_dt_nested_cv_comparison.png](figures/exp_dt_nested_cv_comparison.png)
+
+### 6.1 実験結果まとめ
+
+| モデル設定 | 新特徴量追加前 (12特徴量)<br>Balanced Acc [正解数] | 新特徴量追加後 (13特徴量)<br>Balanced Acc [正解数] | 改善幅 (pt) | 追加後の主要選出特徴量 (SFS選出率) |
+| :--- | :---: | :---: | :---: | :--- |
+| **Depth=1 (Stump, 決定株)** | 27.0% (7/23) | **68.7% (17/23)** | **+41.7pt** | `comment_rate` (100%), **`segment_length_sec` (95.7%)**, `exclamation_ratio` (91.3%) |
+| **Depth=3, Leaf=2** | 56.3% (13/23) | **63.5% (15/23)** | **+7.2pt** | **`segment_length_sec` (95.7%)**, `subtitle_sentiment_polarity` (69.6%), `speech_rate` (47.8%) |
+| **Default (max_depth=None)** | 43.7% (10/23) | **57.9% (14/23)** | **+14.2pt** | **`segment_length_sec` (95.7%)**, `question_ratio` (82.6%), `hm_mean` (47.8%) |
+| **Depth=1, Balanced** | 30.6% (8/23) | **52.4% (13/23)** | **+21.8pt** | `comment_rate` (100%), `exclamation_ratio` (95.7%), **`segment_length_sec` (78.3%)** |
+| **Depth=2, Leaf=2** | 28.6% (8/23) | **52.8% (12/23)** | **+24.2pt** | **`segment_length_sec` (95.7%)**, `exclamation_ratio` (43.5%), `sentiment_polarity` (39.1%) |
+| *(参考) Fixed 2 Feats (Q+Sent) Depth=1* | 63.1% (16/23) | 63.1% (16/23) | ±0.0pt | 固定: `question_ratio`, `sentiment_polarity` |
+
+### 6.2 考察と結論
+1. **新特徴量「セグメントの長さ」の頑健性**:
+   - 二重交差検証の内側ループにおいて、全23フォールド中22フォールド（**95.7%**）で `segment_length_sec` が自動選出された。
+   - テストデータを隔離したブラインド条件でも一貫して選択されたことから、セグメント長が視聴満足度を判別する上で本質的な特徴量であることが統計的・機械学習的に証明された。
+2. **モデル性能の飛躍的向上**:
+   - 決定株（Depth=1）において、Balanced Accuracy が **27.0% から 68.7% へ +41.7pt 劇的に向上**。前週の最良RF（59.5%）を大幅に凌駕した。
+

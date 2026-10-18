@@ -1,0 +1,11 @@
+Category,Model_Name,Features,Accuracy,Balanced_Accuracy,F1_Macro,Correct_Count,Total,TP,TN,FP,FN,Misclassified_Segments
+Single Feature (Stump d=1),DT: question_ratio only (d=1),question_ratio,0.6956521739130435,0.6309523809523809,0.6247086247086246,16,23,13,3,6,1,"[1, 2, 7, 17, 19, 20, 22]"
+Single Feature (Stump d=1),DT: hm_mean only (d=1),hm_mean,0.7391304347826086,0.6666666666666666,0.6617647058823529,17,23,14,3,6,0,"[4, 11, 14, 17, 19, 22]"
+Single Feature (Stump d=1),DT: segment_length only (d=1),segment_length_sec,0.782608695652174,0.7420634920634921,0.7526881720430108,18,23,13,5,4,1,"[2, 4, 7, 19, 23]"
+Multiple Features (DT),"DT: question_ratio + hm_mean (d=2, l=1)","question_ratio, hm_mean",0.8260869565217391,0.7976190476190477,0.8083333333333333,19,23,13,6,3,1,"[1, 17, 19, 22]"
+Multiple Features (DT),"DT: question_ratio + segment_length (d=3, l=1)","question_ratio, segment_length_sec",0.8260869565217391,0.7976190476190477,0.8083333333333333,19,23,13,6,3,1,"[2, 7, 19, 23]"
+Multiple Features (DT),"DT: question_ratio + sentiment_polarity (d=3, l=1)","question_ratio, sentiment_polarity",0.7391304347826086,0.7261904761904762,0.7261904761904762,17,23,11,6,3,3,"[1, 7, 8, 10, 17, 19]"
+Multiple Features (DT),"DT: question_ratio + hm_mean + segment_length (d=3, l=1)","question_ratio, hm_mean, segment_length_sec",0.7391304347826086,0.7063492063492063,0.7125,17,23,12,5,4,2,"[2, 4, 5, 7, 19, 23]"
+Random Forest Comparison,"RF: question_ratio + sentiment (d=2, l=2)","question_ratio, sentiment_polarity",0.6521739130434783,0.5952380952380952,0.5892857142857143,15,23,12,3,6,2,"[1, 7, 10, 14, 17, 19, 20, 22]"
+Random Forest Comparison,"RF: question_ratio + hm_mean (d=2, l=2)","question_ratio, hm_mean",0.6086956521739131,0.5396825396825397,0.5174825174825175,14,23,12,2,7,2,"[1, 4, 5, 7, 11, 17, 19, 20, 22]"
+Random Forest Comparison,"RF: question_ratio + segment_length (d=2, l=2)","question_ratio, segment_length_sec",0.6956521739130435,0.6706349206349207,0.6734279918864097,16,23,11,5,4,3,"[1, 2, 7, 13, 17, 19, 23]"
