@@ -1,0 +1,11 @@
+Model_Setting,Hyperparameters,Before_BalAcc,Before_Correct,After_BalAcc,After_Correct,Diff_pt,After_Top_SFS_Features
+Default (max_depth=None),"max_depth=None, leaf=1, weight=None",0.4365079365079365,10/23,0.5793650793650793,14/23,14.28571428571428,"segment_length_sec(22), question_ratio(19), hm_mean(11)"
+Depth=1 (Stump),"max_depth=1, leaf=1, weight=None",0.2698412698412698,7/23,0.6865079365079365,17/23,41.66666666666667,"comment_rate(23), segment_length_sec(22), exclamation_ratio(21)"
+"Depth=2, Leaf=2","max_depth=2, leaf=2, weight=None",0.2857142857142857,8/23,0.5277777777777778,12/23,24.20634920634921,"segment_length_sec(22), exclamation_ratio(10), sentiment_polarity(9)"
+"Depth=2, Leaf=3","max_depth=2, leaf=3, weight=None",0.2857142857142857,8/23,0.38492063492063494,8/23,9.920634920634924,"segment_length_sec(20), sentiment_polarity(12), exclamation_ratio(10)"
+"Depth=3, Leaf=2","max_depth=3, leaf=2, weight=None",0.5634920634920635,13/23,0.6349206349206349,15/23,7.14285714285714,"segment_length_sec(22), subtitle_sentiment_polarity(16), speech_rate(11)"
+"Depth=2, Leaf=2, Balanced","max_depth=2, leaf=2, weight=balanced",0.5238095238095238,13/23,0.38095238095238093,9/23,-14.28571428571429,"segment_length_sec(18), exclamation_ratio(14), sentiment_polarity(10)"
+"Depth=1, Balanced","max_depth=1, leaf=1, weight=balanced",0.3055555555555556,8/23,0.5238095238095238,13/23,21.825396825396826,"comment_rate(23), exclamation_ratio(22), segment_length_sec(18)"
+Fixed 2 Feats (Q+Sent) Depth=1,"Fixed: Q+Sent, depth=1, leaf=1",0.6309523809523809,16/23,0.6309523809523809,16/23,0.0,Fixed
+"Fixed 2 Feats (Q+Sent) Depth=2, Leaf=2","Fixed: Q+Sent, depth=2, leaf=2",0.6309523809523809,16/23,0.6309523809523809,16/23,0.0,Fixed
+"Fixed 2 Feats (Q+Sent) Depth=2, Leaf=2, Balanced","Fixed: Q+Sent, depth=2, leaf=2, balanced",0.6309523809523809,16/23,0.6309523809523809,16/23,0.0,Fixed
