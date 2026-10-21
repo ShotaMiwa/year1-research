@@ -1,0 +1,14 @@
+Feature,Selected_Count,Selection_Rate
+pause_ratio,15,65.21739130434783
+segment_length_sec,14,60.86956521739131
+sub_comment_similarity,9,39.130434782608695
+speech_rate,7,30.434782608695656
+exclamation_ratio,3,13.043478260869565
+hm_mean,3,13.043478260869565
+comment_rate,2,8.695652173913043
+question_ratio,2,8.695652173913043
+subtitle_sentiment_polarity,1,4.3478260869565215
+sentiment_polarity,0,0.0
+grass_ratio,0,0.0
+comment_semantic_variance,0,0.0
+hm_max,0,0.0

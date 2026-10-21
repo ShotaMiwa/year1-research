@@ -1,0 +1,5 @@
+??,Accuracy,Balanced Accuracy,Macro F1,TN (Low??),FP (Low??),FN (High??),TP (High??),Top1_Feature,Top2_Feature,Top3_Feature
+A?????????2,12/23 (52.2%),50.8%,50.7%,4,5,6,8,question_ratio (73.9%),comment_semantic_variance (65.2%),exclamation_ratio (17.4%)
+B????????2,13/23 (56.5%),56.3%,55.8%,5,4,6,8,segment_length_sec (100.0%),exclamation_ratio (43.5%),hm_mean (39.1%)
+C?????????3,15/23 (65.2%),59.5%,58.9%,3,6,2,12,hm_mean (91.3%),question_ratio (52.2%),comment_semantic_variance (34.8%)
+D????????3,11/23 (47.8%),51.2%,47.7%,6,3,9,5,segment_length_sec (73.9%),comment_rate (30.4%),hm_mean (26.1%)

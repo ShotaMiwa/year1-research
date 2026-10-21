@@ -1,0 +1,24 @@
+Outer_Fold,Segment_ID,True_Class,Predicted_Class,Is_Correct,Inner_Best_BalAcc,Inner_Best_Acc,Selected_Feature_Count,Selected_Features,Selected_Hyperparameters,Has_Segment_Length
+1,1,1,1,True,0.8504273504273505,0.8636363636363636,3,"speech_rate, pause_ratio, segment_length_sec","depth=3, leaf=2, weight=None",True
+2,2,0,1,False,0.9017857142857143,0.9090909090909091,2,"question_ratio, segment_length_sec","depth=3, leaf=2, weight=None",True
+3,3,1,1,True,0.8504273504273505,0.8636363636363636,3,"speech_rate, pause_ratio, segment_length_sec","depth=3, leaf=2, weight=None",True
+4,4,0,1,False,0.9285714285714286,0.9090909090909091,2,"pause_ratio, sub_comment_similarity","depth=2, leaf=1, weight=None",False
+5,5,1,1,True,0.8504273504273505,0.8636363636363636,3,"speech_rate, pause_ratio, segment_length_sec","depth=3, leaf=2, weight=None",True
+6,6,1,1,True,0.8504273504273505,0.8636363636363636,3,"speech_rate, pause_ratio, segment_length_sec","depth=3, leaf=2, weight=None",True
+7,7,0,0,True,0.8392857142857143,0.8636363636363636,3,"subtitle_sentiment_polarity, speech_rate, segment_length_sec","depth=3, leaf=1, weight=None",True
+8,8,1,1,True,0.8504273504273505,0.8636363636363636,3,"speech_rate, pause_ratio, segment_length_sec","depth=3, leaf=2, weight=None",True
+9,9,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec","depth=3, leaf=1, weight=None",True
+10,10,1,1,True,0.811965811965812,0.8181818181818182,2,"pause_ratio, sub_comment_similarity","depth=2, leaf=1, weight=None",False
+11,11,0,1,False,0.9017857142857143,0.9090909090909091,3,"pause_ratio, hm_mean, sub_comment_similarity","depth=2, leaf=1, weight=balanced",False
+12,12,1,1,True,0.811965811965812,0.8181818181818182,2,"pause_ratio, sub_comment_similarity","depth=2, leaf=1, weight=None",False
+13,13,1,0,False,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec","depth=2, leaf=1, weight=None",True
+14,14,0,0,True,0.8660714285714286,0.8636363636363636,2,"pause_ratio, sub_comment_similarity","depth=2, leaf=1, weight=None",False
+15,15,1,1,True,0.8504273504273505,0.8636363636363636,3,"speech_rate, pause_ratio, segment_length_sec","depth=3, leaf=2, weight=None",True
+16,16,1,0,False,0.8504273504273505,0.8636363636363636,2,"exclamation_ratio, segment_length_sec","depth=3, leaf=1, weight=None",True
+17,17,0,1,False,0.8660714285714286,0.8636363636363636,2,"question_ratio, sub_comment_similarity","depth=2, leaf=1, weight=balanced",False
+18,18,1,0,False,0.8888888888888888,0.9090909090909091,3,"pause_ratio, hm_mean, sub_comment_similarity","depth=2, leaf=1, weight=None",False
+19,19,0,1,False,0.9017857142857143,0.9090909090909091,2,"hm_mean, segment_length_sec","depth=2, leaf=2, weight=None",True
+20,20,0,0,True,0.8660714285714286,0.8636363636363636,2,"pause_ratio, sub_comment_similarity","depth=2, leaf=1, weight=None",False
+21,21,1,0,False,0.8504273504273505,0.8636363636363636,3,"comment_rate, pause_ratio, segment_length_sec","depth=3, leaf=1, weight=None",True
+22,22,0,0,True,0.8660714285714286,0.8636363636363636,2,"pause_ratio, sub_comment_similarity","depth=2, leaf=1, weight=None",False
+23,23,1,0,False,0.8504273504273505,0.8636363636363636,2,"comment_rate, segment_length_sec","depth=3, leaf=1, weight=None",True
