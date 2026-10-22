@@ -1,0 +1,24 @@
+Outer_Fold,True_Class,Pred_Class,Is_Correct,Inner_Best_BalAcc,Inner_Best_Acc,Selected_Features
+1,1,0,False,0.717948717948718,0.7272727272727273,"exclamation_ratio, subtitle_sentiment_polarity"
+2,0,1,False,0.7142857142857143,0.7727272727272727,"question_ratio, speech_rate"
+3,1,0,False,0.7008547008547008,0.7272727272727273,"question_ratio, comment_semantic_variance"
+4,0,1,False,0.7142857142857143,0.7727272727272727,"question_ratio, speech_rate"
+5,1,1,True,0.6623931623931625,0.6818181818181818,"grass_ratio, hm_mean"
+6,1,0,False,0.7008547008547008,0.7272727272727273,"question_ratio, sub_comment_similarity"
+7,0,1,False,0.6517857142857143,0.7272727272727273,question_ratio
+8,1,0,False,0.6794871794871795,0.6818181818181818,"hm_max, comment_semantic_variance"
+9,1,0,False,0.7564102564102564,0.7727272727272727,"speech_rate, comment_semantic_variance"
+10,1,0,False,0.6623931623931625,0.6818181818181818,sentiment_polarity
+11,0,1,False,0.6517857142857143,0.7272727272727273,hm_mean
+12,1,0,False,0.7393162393162394,0.7727272727272727,"sentiment_polarity, speech_rate"
+13,1,0,False,0.7008547008547008,0.7272727272727273,speech_rate
+14,0,1,False,0.6875,0.7727272727272727,hm_mean
+15,1,1,True,0.6623931623931625,0.6818181818181818,"exclamation_ratio, subtitle_sentiment_polarity"
+16,1,0,False,0.6623931623931625,0.6818181818181818,"exclamation_ratio, subtitle_sentiment_polarity"
+17,0,1,False,0.6875,0.7727272727272727,"sentiment_polarity, hm_mean"
+18,1,1,True,0.6623931623931625,0.6818181818181818,"exclamation_ratio, subtitle_sentiment_polarity"
+19,0,1,False,0.7142857142857143,0.7727272727272727,"comment_rate, speech_rate"
+20,0,1,False,0.7410714285714286,0.7727272727272727,"exclamation_ratio, subtitle_sentiment_polarity"
+21,1,1,True,0.6623931623931625,0.6818181818181818,"exclamation_ratio, subtitle_sentiment_polarity"
+22,0,1,False,0.6785714285714286,0.7272727272727273,"comment_rate, speech_rate"
+23,1,0,False,0.7008547008547008,0.7272727272727273,"hm_max, comment_semantic_variance"
