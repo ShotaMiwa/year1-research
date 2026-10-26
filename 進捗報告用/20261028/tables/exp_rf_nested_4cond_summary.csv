@@ -1,0 +1,5 @@
+条件,Accuracy,Balanced Accuracy,Macro F1,TN (Low正解),FP (Low誤判定),FN (High誤判定),TP (High正解),Top1_Feature,Top2_Feature,Top3_Feature
+A_RF：基本特徴量・深さ2,4/23 (17.4%),14.3%,14.8%,0,9,10,4,speech_rate (30.4%),subtitle_sentiment_polarity (26.1%),exclamation_ratio (26.1%)
+B_RF：セグメント長追加・深さ2,15/23 (65.2%),59.5%,58.9%,3,6,2,12,segment_length_sec (95.7%),exclamation_ratio (60.9%),question_ratio (17.4%)
+C_RF：基本特徴量・深さ3,7/23 (30.4%),29.0%,29.2%,2,7,9,5,speech_rate (60.9%),question_ratio (56.5%),comment_semantic_variance (52.2%)
+D_RF：セグメント長追加・深さ3,14/23 (60.9%),57.9%,58.0%,4,5,4,10,segment_length_sec (95.7%),exclamation_ratio (69.6%),subtitle_sentiment_polarity (17.4%)
