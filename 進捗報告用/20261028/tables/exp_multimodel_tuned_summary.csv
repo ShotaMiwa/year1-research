@@ -1,0 +1,6 @@
+モデルID,モデル名,カテゴリ,正解率 (Accuracy),Balanced Accuracy,Macro F1,Low正解 (TN/9),Low誤判定 (FP/9),High誤判定 (FN/14),High正解 (TP/14),最頻選出パラメータ,Top1特徴量,Top2特徴量
+LogReg_Tuned,ロジスティック回帰 (C探索),線形モデル,12/23 (52.2%),48.80952380952381,48.6815415821501,3,6,5,9,{'C': 0.1} (12/23回),question_ratio (82.6%),segment_length_sec (52.2%)
+SVC_Lin_Tuned,線形SVM (C探索),線形モデル,15/23 (65.2%),61.50793650793651,61.66666666666667,4,5,3,11,{'C': 1.0} (12/23回),question_ratio (69.6%),speech_rate (65.2%)
+SVC_RBF_Tuned,"非線形SVM (C, gamma探索)",カーネル非線形,6/23 (26.1%),23.41269841269841,23.781676413255358,1,8,9,5,"{'C': 10.0, 'gamma': 'scale'} (8/23回)",comment_semantic_variance (52.2%),question_ratio (39.1%)
+DT_Tuned,"決定木 (深さ2/3, 葉サンプル2/3探索)",非線形・解釈性,8/23 (34.8%),34.523809523809526,34.285714285714285,3,6,9,5,"{'max_depth': 3, 'min_samples_leaf': 2} (11/23回)",segment_length_sec (69.6%),comment_rate (30.4%)
+RF_Tuned,ランダムフォレスト (深さ2/3探索),非線形・アンサンブル,12/23 (52.2%),46.82539682539682,45.59139784946237,2,7,4,10,{'max_depth': 2} (13/23回),segment_length_sec (91.3%),exclamation_ratio (60.9%)

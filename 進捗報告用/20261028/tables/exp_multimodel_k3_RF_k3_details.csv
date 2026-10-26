@@ -1,0 +1,24 @@
+Outer_Fold,True_Class,Pred_Class,Is_Correct,Inner_Best_BalAcc,Inner_Best_Acc,Selected_k,Selected_Features
+1,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+2,0,1,False,0.8660714285714286,0.8636363636363636,2,"exclamation_ratio, segment_length_sec"
+3,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+4,0,1,False,0.7767857142857143,0.8181818181818182,1,segment_length_sec
+5,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+6,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+7,0,1,False,0.7767857142857143,0.8181818181818182,2,"comment_rate, segment_length_sec"
+8,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+9,1,0,False,0.8675213675213675,0.8636363636363636,2,"subtitle_sentiment_polarity, segment_length_sec"
+10,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+11,0,0,True,0.7410714285714286,0.7727272727272727,3,"exclamation_ratio, subtitle_sentiment_polarity, segment_length_sec"
+12,1,0,False,0.811965811965812,0.8181818181818182,1,segment_length_sec
+13,1,0,False,0.8504273504273505,0.8636363636363636,2,"exclamation_ratio, segment_length_sec"
+14,0,0,True,0.7678571428571428,0.7727272727272727,1,segment_length_sec
+15,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+16,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+17,0,0,True,0.8035714285714286,0.8181818181818182,3,"exclamation_ratio, subtitle_sentiment_polarity, segment_length_sec"
+18,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+19,0,1,False,0.8035714285714286,0.8181818181818182,2,"question_ratio, segment_length_sec"
+20,0,0,True,0.8035714285714286,0.8181818181818182,3,"exclamation_ratio, subtitle_sentiment_polarity, segment_length_sec"
+21,1,1,True,0.811965811965812,0.8181818181818182,2,"exclamation_ratio, segment_length_sec"
+22,0,1,False,0.7767857142857143,0.8181818181818182,3,"question_ratio, speech_rate, comment_semantic_variance"
+23,1,0,False,0.8504273504273505,0.8636363636363636,3,"comment_rate, exclamation_ratio, segment_length_sec"

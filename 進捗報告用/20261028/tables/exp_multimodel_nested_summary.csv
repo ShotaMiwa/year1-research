@@ -1,0 +1,6 @@
+モデルID,モデル名,カテゴリ,正解率 (Accuracy),Balanced Accuracy,Macro F1,Low正解 (TN/9),Low誤判定 (FP/9),High誤判定 (FN/14),High正解 (TP/14),Top1特徴量,Top2特徴量
+LogReg,ロジスティック回帰 (L2線形),線形モデル,13/23 (56.5%),54.365079365079374,54.365079365079374,4,5,5,9,question_ratio (87.0%),speech_rate (56.5%)
+SVC_Lin,線形SVM (Linear SVM),線形モデル,16/23 (69.6%),65.07936507936508,65.3763440860215,4,5,2,12,question_ratio (60.9%),speech_rate (47.8%)
+SVC_RBF,非線形SVM (RBFカーネル),カーネル非線形,10/23 (43.5%),39.682539682539684,39.350912778904664,2,7,6,8,speech_rate (65.2%),comment_semantic_variance (43.5%)
+DT,"決定木 (Decision Tree, 深さ2)",非線形・解釈性,13/23 (56.5%),56.34920634920635,55.769230769230774,5,4,6,8,segment_length_sec (100.0%),exclamation_ratio (43.5%)
+RF,"ランダムフォレスト (Random Forest, 深さ2)",非線形・アンサンブル,15/23 (65.2%),59.523809523809526,58.92857142857143,3,6,2,12,segment_length_sec (95.7%),exclamation_ratio (60.9%)

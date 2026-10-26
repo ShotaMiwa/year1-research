@@ -1,0 +1,13 @@
+Feature,Selected_Count,Selection_Rate
+question_ratio,20,86.95652173913044
+speech_rate,20,86.95652173913044
+comment_semantic_variance,18,78.26086956521739
+comment_rate,5,21.73913043478261
+segment_length_sec,2,8.695652173913043
+sentiment_polarity,2,8.695652173913043
+exclamation_ratio,1,4.3478260869565215
+subtitle_sentiment_polarity,1,4.3478260869565215
+hm_mean,0,0.0
+grass_ratio,0,0.0
+hm_max,0,0.0
+sub_comment_similarity,0,0.0

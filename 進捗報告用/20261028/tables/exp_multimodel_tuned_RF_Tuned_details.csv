@@ -1,0 +1,24 @@
+Outer_Fold,True_Class,Pred_Class,Is_Correct,Inner_Best_BalAcc,Inner_Best_Acc,Selected_Features,Selected_Params
+1,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 2}
+2,0,1,False,0.8660714285714286,0.8636363636363636,"exclamation_ratio, segment_length_sec",{'max_depth': 2}
+3,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 2}
+4,0,1,False,0.7767857142857143,0.8181818181818182,segment_length_sec,{'max_depth': 2}
+5,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 3}
+6,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 3}
+7,0,1,False,0.7767857142857143,0.8181818181818182,segment_length_sec,{'max_depth': 2}
+8,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 3}
+9,1,0,False,0.8675213675213675,0.8636363636363636,"subtitle_sentiment_polarity, segment_length_sec",{'max_depth': 3}
+10,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 3}
+11,0,0,True,0.7142857142857143,0.7727272727272727,segment_length_sec,{'max_depth': 2}
+12,1,0,False,0.811965811965812,0.8181818181818182,segment_length_sec,{'max_depth': 3}
+13,1,0,False,0.8504273504273505,0.8636363636363636,"exclamation_ratio, segment_length_sec",{'max_depth': 2}
+14,0,0,True,0.7678571428571428,0.7727272727272727,segment_length_sec,{'max_depth': 3}
+15,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 3}
+16,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 2}
+17,0,1,False,0.7410714285714286,0.7727272727272727,"question_ratio, segment_length_sec",{'max_depth': 2}
+18,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 2}
+19,0,1,False,0.8035714285714286,0.8181818181818182,"question_ratio, segment_length_sec",{'max_depth': 2}
+20,0,1,False,0.7410714285714286,0.7727272727272727,"exclamation_ratio, subtitle_sentiment_polarity",{'max_depth': 2}
+21,1,1,True,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 3}
+22,0,1,False,0.7410714285714286,0.7727272727272727,comment_semantic_variance,{'max_depth': 3}
+23,1,0,False,0.811965811965812,0.8181818181818182,"exclamation_ratio, segment_length_sec",{'max_depth': 2}

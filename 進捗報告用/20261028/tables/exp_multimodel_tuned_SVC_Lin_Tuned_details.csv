@@ -1,0 +1,24 @@
+Outer_Fold,True_Class,Pred_Class,Is_Correct,Inner_Best_BalAcc,Inner_Best_Acc,Selected_Features,Selected_Params
+1,1,1,True,0.7948717948717949,0.8181818181818182,"question_ratio, speech_rate",{'C': 10.0}
+2,0,1,False,0.8035714285714286,0.8181818181818182,speech_rate,{'C': 1.0}
+3,1,1,True,0.811965811965812,0.8181818181818182,"question_ratio, segment_length_sec",{'C': 1.0}
+4,0,1,False,0.8035714285714286,0.8181818181818182,speech_rate,{'C': 1.0}
+5,1,1,True,0.7948717948717949,0.8181818181818182,"question_ratio, speech_rate",{'C': 10.0}
+6,1,1,True,0.7948717948717949,0.8181818181818182,"question_ratio, speech_rate",{'C': 10.0}
+7,0,0,True,0.7410714285714286,0.7727272727272727,"question_ratio, comment_semantic_variance",{'C': 1.0}
+8,1,1,True,0.811965811965812,0.8181818181818182,"question_ratio, segment_length_sec",{'C': 1.0}
+9,1,0,False,0.8333333333333333,0.8636363636363636,"speech_rate, comment_semantic_variance",{'C': 0.1}
+10,1,1,True,0.7948717948717949,0.8181818181818182,"question_ratio, speech_rate",{'C': 10.0}
+11,0,0,True,0.8035714285714286,0.8181818181818182,"question_ratio, segment_length_sec",{'C': 1.0}
+12,1,0,False,0.811965811965812,0.8181818181818182,"speech_rate, hm_mean",{'C': 10.0}
+13,1,0,False,0.8504273504273505,0.8636363636363636,"speech_rate, comment_semantic_variance",{'C': 1.0}
+14,0,0,True,0.7767857142857143,0.8181818181818182,"question_ratio, speech_rate",{'C': 10.0}
+15,1,1,True,0.811965811965812,0.8181818181818182,"question_ratio, segment_length_sec",{'C': 1.0}
+16,1,1,True,0.7948717948717949,0.8181818181818182,"question_ratio, speech_rate",{'C': 10.0}
+17,0,1,False,0.8392857142857143,0.8636363636363636,"speech_rate, comment_semantic_variance",{'C': 1.0}
+18,1,1,True,0.7948717948717949,0.8181818181818182,"question_ratio, speech_rate",{'C': 10.0}
+19,0,1,False,0.8035714285714286,0.8181818181818182,"question_ratio, comment_semantic_variance",{'C': 1.0}
+20,0,0,True,0.7410714285714286,0.7727272727272727,speech_rate,{'C': 10.0}
+21,1,1,True,0.811965811965812,0.8181818181818182,"question_ratio, segment_length_sec",{'C': 1.0}
+22,0,1,False,0.8392857142857143,0.8636363636363636,"question_ratio, speech_rate",{'C': 1.0}
+23,1,1,True,0.811965811965812,0.8181818181818182,"question_ratio, segment_length_sec",{'C': 10.0}
