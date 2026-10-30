@@ -1,0 +1,6 @@
+﻿Condition,Feature_Count,Regularization,Accuracy,Accuracy_Ratio,Balanced_Accuracy,Macro_F1,TN_FP_FN_TP
+Linear SVM (Exp A: k<=2 selection),k<=2 (Selected),L2 (C=1.0),0.6956521739130435,16/23 (69.6%),0.6508,0.6538,"[Low: 5/9, High: 11/14]"
+Logistic Reg (Exp A: k<=2 selection),k<=2 (Selected),L2 (C=1.0),0.5652173913043478,13/23 (56.5%),0.5437,0.5437,"[Low: 4/9, High: 9/14]"
+"Linear SVM (All 12, L2)",All 12 Features,L2,0.5652173913043478,12/23 (56.5%),0.5238095238095238,0.5208333333333333,"[Low: 3/9, High: 10/14]"
+"Logistic Reg (All 12, L2)",All 12 Features,L2,0.6521739130434783,15/23 (65.2%),0.6150793650793651,0.6166666666666667,"[Low: 4/9, High: 11/14]"
+"Logistic Reg (All 12, L1/Lasso)",All 12 Features,L1 (Lasso),0.6086956521739131,14/23 (60.9%),0.5992063492063493,0.5964912280701754,"[Low: 5/9, High: 9/14]"

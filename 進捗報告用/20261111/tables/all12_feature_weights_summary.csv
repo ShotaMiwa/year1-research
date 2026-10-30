@@ -1,0 +1,37 @@
+﻿Condition_ID,Condition_Name,Feature,Feature_Label,Mean_Weight,Std_Weight
+svc_all12_l2,"Linear SVM (All 12, L2)",comment_rate,Comment Rate,-0.7805396733659176,0.2108503186348736
+svc_all12_l2,"Linear SVM (All 12, L2)",question_ratio,Question Ratio,-1.4689458937587503,0.1314848733077876
+svc_all12_l2,"Linear SVM (All 12, L2)",exclamation_ratio,Exclamation Ratio,-0.12198546376990035,0.2221350750740382
+svc_all12_l2,"Linear SVM (All 12, L2)",sentiment_polarity,Comment Sentiment,0.5323442270835184,0.18373298999958598
+svc_all12_l2,"Linear SVM (All 12, L2)",subtitle_sentiment_polarity,Subtitle Sentiment,-0.3252224458918951,0.23061287708126585
+svc_all12_l2,"Linear SVM (All 12, L2)",speech_rate,Speech Rate,-0.2817177129512998,0.2213942116817642
+svc_all12_l2,"Linear SVM (All 12, L2)",grass_ratio,Laughter (w) Ratio,-0.290595865204268,0.1450259616973014
+svc_all12_l2,"Linear SVM (All 12, L2)",hm_mean,Heatmap Mean,0.2386356730942157,0.18451751423013832
+svc_all12_l2,"Linear SVM (All 12, L2)",hm_max,Heatmap Max,0.10252606956666692,0.17015757551285934
+svc_all12_l2,"Linear SVM (All 12, L2)",comment_semantic_variance,Comment Semantic Variance,0.9313591002635961,0.18852286509637095
+svc_all12_l2,"Linear SVM (All 12, L2)",sub_comment_similarity,Sub-Comment Similarity,-0.08999360109436763,0.1614999177092629
+svc_all12_l2,"Linear SVM (All 12, L2)",segment_length_sec,Segment Length (sec),0.45637645917698505,0.15739076519041506
+logreg_all12_l2,"Logistic Reg (All 12, L2)",comment_rate,Comment Rate,-0.43091877902259457,0.14442647317061752
+logreg_all12_l2,"Logistic Reg (All 12, L2)",question_ratio,Question Ratio,-1.33900325328055,0.08429014013900214
+logreg_all12_l2,"Logistic Reg (All 12, L2)",exclamation_ratio,Exclamation Ratio,0.13847562278434583,0.09478904198152979
+logreg_all12_l2,"Logistic Reg (All 12, L2)",sentiment_polarity,Comment Sentiment,0.4798077824823693,0.09366637528692744
+logreg_all12_l2,"Logistic Reg (All 12, L2)",subtitle_sentiment_polarity,Subtitle Sentiment,-0.18111655109694152,0.12680404789214597
+logreg_all12_l2,"Logistic Reg (All 12, L2)",speech_rate,Speech Rate,-0.4102200530332599,0.12280137331997057
+logreg_all12_l2,"Logistic Reg (All 12, L2)",grass_ratio,Laughter (w) Ratio,-0.23260477061235377,0.1284470255393654
+logreg_all12_l2,"Logistic Reg (All 12, L2)",hm_mean,Heatmap Mean,0.25626945968029585,0.10454933692414843
+logreg_all12_l2,"Logistic Reg (All 12, L2)",hm_max,Heatmap Max,0.1985378294958801,0.08900154657153052
+logreg_all12_l2,"Logistic Reg (All 12, L2)",comment_semantic_variance,Comment Semantic Variance,0.8515918610277945,0.11298803380783067
+logreg_all12_l2,"Logistic Reg (All 12, L2)",sub_comment_similarity,Sub-Comment Similarity,0.06661976670200043,0.1238639471837815
+logreg_all12_l2,"Logistic Reg (All 12, L2)",segment_length_sec,Segment Length (sec),0.5497479369543885,0.08262886293797378
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",comment_rate,Comment Rate,-0.26798687279699623,0.11500287745510962
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",question_ratio,Question Ratio,-1.3320751172025695,0.1779617914213206
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",exclamation_ratio,Exclamation Ratio,0.010266485020803368,0.04345610924756537
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",sentiment_polarity,Comment Sentiment,0.39179651339862465,0.09962690863463199
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",subtitle_sentiment_polarity,Subtitle Sentiment,0.0,0.0
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",speech_rate,Speech Rate,-0.1977118233181309,0.17504901868638925
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",grass_ratio,Laughter (w) Ratio,-0.06308491580310137,0.1293742484460977
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",hm_mean,Heatmap Mean,0.03729776670588464,0.05143717761998479
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",hm_max,Heatmap Max,0.0668435166418717,0.09752819429539596
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",comment_semantic_variance,Comment Semantic Variance,0.6720274616481667,0.14442599584029567
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",sub_comment_similarity,Sub-Comment Similarity,-0.01099712280037547,0.05158107809559469
+logreg_all12_l1,"Logistic Reg (All 12, L1/Lasso)",segment_length_sec,Segment Length (sec),0.6951856989314302,0.18336124240962554
