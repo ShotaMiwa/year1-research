@@ -308,6 +308,51 @@ def generate_verification_html(results: list, output_path: Path):
         .btn-adj {{ background: #ea8600; color: #fff; }}
         .status-msg {{ font-size: 13px; font-weight: bold; color: #666; }}
         
+        .header-actions {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+        .stat-badge {{
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 6px;
+        }}
+        .stat-done {{ background: #e6f4ea; color: #137333; }}
+        .stat-pending {{ background: #fef7e0; color: #b06000; border: 1px solid #f9ab00; }}
+        .stat-ok {{ background: #ceead6; color: #0d652d; }}
+        .stat-ng {{ background: #fad2cf; color: #a50e0e; }}
+        .filter-select {{
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 13px;
+            font-weight: bold;
+            background: #fff;
+            cursor: pointer;
+        }}
+        .btn-jump {{
+            background: #1a73e8;
+            color: #fff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+        }}
+        .btn-jump:hover {{ background: #1557b0; }}
+        
+        /* カードの未チェック・チェック済み状態の視覚的強調 */
+        .card.is-pending {{
+            border-left: 6px solid #f9ab00;
+        }}
+        .card.is-done {{
+            border-left: 6px solid #137333;
+        }}
+        .card.is-ng {{
+            border-left: 6px solid #c5221f;
+        }}
+        
         /* 微調整パネルのスタイル */
         .adjust-panel {{
             margin-top: 15px;
@@ -386,23 +431,119 @@ def generate_verification_html(results: list, output_path: Path):
         const STORAGE_KEY = 'shorts_alignment_decisions_v1';
         let decisions = {{}};
 
-        // ページロード時に localStorage から判定を復元
-        window.addEventListener('DOMContentLoaded', () => {{
-            loadDecisions();
+        // ページロード時に サーバー（ローカルファイル） & localStorage から判定を復元
+        window.addEventListener('DOMContentLoaded', async () => {{
+            await loadDecisions();
         }});
 
-        function loadDecisions() {{
+        async function loadDecisions() {{
             try {{
-                const saved = localStorage.getItem(STORAGE_KEY);
-                if (saved) {{
-                    decisions = JSON.parse(saved);
-                    for (const [idx, data] of Object.entries(decisions)) {{
-                        applyDecisionUI(idx, data);
+                const res = await fetch('/api/decisions');
+                if (res.ok) {{
+                    const serverDecisions = await res.json();
+                    if (serverDecisions && Object.keys(serverDecisions).length > 0) {{
+                        decisions = serverDecisions;
                     }}
                 }}
             }} catch(e) {{
-                console.error('Failed to load decisions:', e);
+                console.log('Server API not reachable, falling back to localStorage');
             }}
+
+            if (Object.keys(decisions).length === 0) {{
+                try {{
+                    const saved = localStorage.getItem(STORAGE_KEY);
+                    if (saved) decisions = JSON.parse(saved);
+                }} catch(e) {{}}
+            }}
+
+            for (const [idx, data] of Object.entries(decisions)) {{
+                applyDecisionUI(idx, data);
+            }}
+
+            updateSummaryCounters();
+            filterCards('pending');
+        }}
+
+        function saveDecisions() {{
+            try {{
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(decisions));
+            }} catch(e) {{}}
+
+            fetch('/api/decisions', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify(decisions)
+            }}).catch(err => console.error('Failed to sync to server file:', err));
+        }}
+
+        function updateSummaryCounters() {{
+            const total = document.querySelectorAll('.card').length;
+            let done = 0, ok = 0, ng = 0;
+            
+            for (let i = 1; i <= total; i++) {{
+                const card = document.getElementById('card-' + i);
+                const d = decisions[i];
+                card.classList.remove('is-pending', 'is-done', 'is-ng');
+                
+                if (d && (d.status === 'OK' || d.status === 'ADJUSTED')) {{
+                    done++;
+                    ok++;
+                    card.classList.add('is-done');
+                }} else if (d && d.status === 'NG') {{
+                    done++;
+                    ng++;
+                    card.classList.add('is-ng');
+                }} else {{
+                    card.classList.add('is-pending');
+                }}
+            }}
+            
+            const pending = total - done;
+            document.getElementById('total-count').innerText = total;
+            document.getElementById('done-count').innerText = done;
+            document.getElementById('pending-count').innerText = pending;
+            document.getElementById('ok-count').innerText = ok;
+            document.getElementById('ng-count').innerText = ng;
+        }}
+
+        function filterCards(type) {{
+            const total = document.querySelectorAll('.card').length;
+            for (let i = 1; i <= total; i++) {{
+                const card = document.getElementById('card-' + i);
+                const d = decisions[i];
+                const isDone = (d && d.status);
+                const isOk = (d && (d.status === 'OK' || d.status === 'ADJUSTED'));
+                const isNg = (d && d.status === 'NG');
+                
+                let show = true;
+                if (type === 'pending') {{
+                    show = !isDone;
+                }} else if (type === 'done') {{
+                    show = isDone;
+                }} else if (type === 'ok') {{
+                    show = isOk;
+                }} else if (type === 'ng') {{
+                    show = isNg;
+                }}
+                card.style.display = show ? 'block' : 'none';
+            }}
+        }}
+
+        function jumpToNextPending() {{
+            const total = document.querySelectorAll('.card').length;
+            for (let i = 1; i <= total; i++) {{
+                const d = decisions[i];
+                if (!d || !d.status) {{
+                    const card = document.getElementById('card-' + i);
+                    card.style.display = 'block';
+                    card.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    card.style.transition = 'box-shadow 0.3s';
+                    card.style.boxShadow = '0 0 15px #f9ab00';
+                    setTimeout(() => {{ card.style.boxShadow = ''; }}, 1500);
+                    return;
+                }}
+            }}
+            alert('🎉 すべての動画のチェックが完了しています！');
         }}
 
         function saveDecisions() {{
@@ -441,6 +582,7 @@ def generate_verification_html(results: list, output_path: Path):
             decisions[idx] = {{ status: val }};
             saveDecisions();
             applyDecisionUI(idx, decisions[idx]);
+            updateSummaryCounters();
         }}
 
         function toggleAdjustPanel(idx) {{
@@ -510,6 +652,7 @@ def generate_verification_html(results: list, output_path: Path):
 
             saveDecisions();
             applyDecisionUI(idx, decisions[idx]);
+            updateSummaryCounters();
             toggleAdjustPanel(idx);
         }}
 
@@ -540,9 +683,24 @@ def generate_verification_html(results: list, output_path: Path):
     <div class="header">
         <div>
             <h1>Shorts × 元配信アライメント 検証レポート</h1>
-            <div class="summary-stats">対象件数: {len(results)}件 | 目視検証プロトコル</div>
+            <div class="summary-stats">
+                全 <span id="total-count">{len(results)}</span> 件中: 
+                <span class="stat-badge stat-done">チェック済: <span id="done-count">0</span></span>
+                <span class="stat-badge stat-pending">未チェック: <span id="pending-count">{len(results)}</span></span>
+                <span class="stat-badge stat-ok">承認: <span id="ok-count">0</span></span>
+                <span class="stat-badge stat-ng">却下: <span id="ng-count">0</span></span>
+            </div>
         </div>
-        <div style="display: flex; gap: 10px;">
+        <div class="header-actions">
+            <!-- フィルタ・ジャンプ機能 -->
+            <button class="btn btn-jump" onclick="jumpToNextPending()">⏭️ 次の未チェックへジャンプ</button>
+            <select id="filter-select" class="filter-select" onchange="filterCards(this.value)">
+                <option value="all">すべて表示</option>
+                <option value="pending" selected>未チェックのみ表示</option>
+                <option value="done">チェック済みのみ表示</option>
+                <option value="ok">承認(OK)のみ</option>
+                <option value="ng">却下(NG)のみ</option>
+            </select>
             <button class="btn btn-ok" onclick="exportDecisionsCSV()">📥 判定結果をCSV出力</button>
             <button class="btn btn-adj" onclick="resetAllDecisions()">🔄 全リセット</button>
         </div>

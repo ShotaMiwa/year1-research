@@ -25,8 +25,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RAW_CHAT_DIR = PROJECT_ROOT / "data/raw/chat"
 REPORT_HTML = PROJECT_ROOT / "docs/paper/verification_report.html"
 
-def run_pilot_batch(target_matches=5):
-    playlist_file = RAW_CHAT_DIR / "shorts_playlist_40.jsonl"
+def run_pilot_batch(target_matches=100):
+    playlist_file = RAW_CHAT_DIR / "shorts_playlist_300.jsonl"
+    if not playlist_file.exists():
+        playlist_file = RAW_CHAT_DIR / "shorts_playlist_100.jsonl"
     if not playlist_file.exists():
         print("プレイリストファイルがありません。")
         return
@@ -201,4 +203,5 @@ def run_pilot_batch(target_matches=5):
     print("="*60)
 
 if __name__ == '__main__':
-    run_pilot_batch(target_matches=5)
+    target = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+    run_pilot_batch(target_matches=target)

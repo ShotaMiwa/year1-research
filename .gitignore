@@ -28,3 +28,8 @@ outputs/
 !data/raw/**
 !data/processed/
 !data/processed/**
+
+# YouTube自動字幕（VTT）および一時キャッシュ・ログはGitから除外（肥大化防止・最優先）
+data/raw/chat/*.vtt
+data/raw/chat/*.jsonl
+data/raw/chat/*.log
