@@ -5,6 +5,7 @@
 
 特徴:
 - フレーズ一致閾値: 5箇所以上（前回の実績基準）
+- 尺: 40s〜240s
 - 1件マッチするごとに即座に JSON / CSV / HTMLレポート を自動保存
 - 中断・再開可能（すでに取得・マッチ済みのShortsは自動スキップ）
 - 別のPCにGitクローンして即実行可能
@@ -21,11 +22,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.satisfaction_analysis.data_collection.align_origin_stream import (
-    align_shorts_to_origin,
+    fetch_video_metadata,
+    extract_candidate_ids_from_description,
+    download_subtitles_ytdlp,
+    parse_vtt_cues,
+    extract_robust_phrases,
     format_seconds,
-    download_vtt_subtitles,
-    RAW_CHAT_DIR,
-    YTDLP_BIN
+    RAW_CHAT_DIR
 )
 from src.satisfaction_analysis.data_collection.generate_verification_report import (
     generate_verification_html
@@ -87,6 +90,77 @@ def save_data(results):
     # 3. HTMLレポート生成
     generate_verification_html(results, OUTPUT_HTML)
 
+def match_candidate(sid, scues, sdur, phrases, cid):
+    ovtt = download_subtitles_ytdlp(cid)
+    if not ovtt:
+        return None
+    ocues = parse_vtt_cues(ovtt)
+    if not ocues:
+        return None
+
+    matched_cues_idx = []
+    matched_phrases = set()
+
+    for idx, c in enumerate(ocues):
+        text = c[2]
+        for p in phrases:
+            if p in text:
+                matched_cues_idx.append(idx)
+                matched_phrases.add(p)
+                break
+
+    if len(matched_phrases) < 5:
+        return None
+
+    # クラスタリング（近接する字幕キューの連続区間を特定）
+    clusters = []
+    cur = [matched_cues_idx[0]]
+    for idx in matched_cues_idx[1:]:
+        if idx - cur[-1] <= 15:
+            cur.append(idx)
+        else:
+            clusters.append(cur)
+            cur = [idx]
+    clusters.append(cur)
+
+    best_cluster = None
+    best_unique_hits = set()
+
+    for cl in clusters:
+        uh = set()
+        for idx in cl:
+            for p in phrases:
+                if p in ocues[idx][2]:
+                    uh.add(p)
+        if len(uh) >= 5 and len(uh) > len(best_unique_hits):
+            best_unique_hits = uh
+            best_cluster = cl
+
+    if not best_cluster:
+        return None
+
+    s_idx = best_cluster[0]
+    e_idx = best_cluster[-1]
+    s_sec = ocues[s_idx][0]
+    e_sec = ocues[e_idx][1]
+    dur = e_sec - s_sec
+
+    # 尺チェック: Shortsの尺の0.5倍〜2.0倍の範囲内
+    if dur < sdur * 0.5 or dur > sdur * 2.0:
+        return None
+
+    return {
+        'origin_id': cid,
+        'start_sec': s_sec,
+        'end_sec': e_sec,
+        'duration': dur,
+        'start_str': format_seconds(s_sec),
+        'end_str': format_seconds(e_sec),
+        'hits': list(best_unique_hits)[:10],
+        'shorts_text_snippet': " ".join([c[2] for c in scues[:6]]) + "...",
+        'origin_text_snippet': " ".join([ocues[i][2] for i in range(s_idx, min(s_idx+6, len(ocues)))]) + "..."
+    }
+
 def run_unlimited_collection():
     if not ALL_PLAYLIST.exists():
         print(f"❌ プレイリストが見つかりません: {ALL_PLAYLIST}")
@@ -106,7 +180,6 @@ def run_unlimited_collection():
     print(f"   [基準]: フレーズ一致 >= 5 (前回実績設定) | 1件ごとに自動保存")
     print("=" * 65)
 
-    # 既存の保存データがあれば引き継ぐ
     existing_results = []
     processed_shorts_ids = set()
     if OUTPUT_JSON.exists():
@@ -129,48 +202,77 @@ def run_unlimited_collection():
         if not sid or sid in processed_shorts_ids:
             continue
 
-        print(f"\n[{i}/{len(items)}] 検査中: {sid} | {title[:40]}...")
+        print(f"\n[{i}/{len(items)}] 検査中: {sid} | {title[:35]}...")
 
-        matched_res = align_shorts_to_origin(sid)
-        
-        if not matched_res or not matched_res.get('origin_id'):
-            print("  [-] 一致なし / スキップ")
+        shorts_url = f"https://www.youtube.com/shorts/{sid}"
+        meta = fetch_video_metadata(shorts_url)
+        if not meta:
+            print("  メタデータ取得失敗、スキップ")
             continue
 
-        hits = matched_res.get('hits', [])
-        if len(hits) < 5:
-            print(f"  [-] フレーズ一致不足: {len(hits)}個 (< 5個)")
+        desc = meta.get("description", "")
+        vc = meta.get("view_count", 0)
+        lc = meta.get("like_count", 0)
+        lr = (lc / vc * 100) if vc > 0 else 0.0
+
+        candidates = extract_candidate_ids_from_description(desc)
+        if not candidates:
+            print("  概要欄に元動画リンクなし、スキップ")
             continue
 
-        meta = matched_res.get('shorts_meta', {})
-        vc = meta.get('view_count', 0)
-        lc = meta.get('like_count', 0)
-        lr = (lc / vc * 100) if vc and vc > 0 else 0.0
+        svtt = download_subtitles_ytdlp(sid)
+        if not svtt:
+            print("  Shorts字幕取得失敗、スキップ")
+            continue
+
+        scues = parse_vtt_cues(svtt)
+        if not scues:
+            print("  Shorts字幕パース失敗、スキップ")
+            continue
+
+        sdur = scues[-1][1] - scues[0][0]
+        if sdur < 40.0 or sdur > 240.0:
+            print(f"  尺対象外（{sdur:.1f}秒: 40s〜240s外）、スキップ")
+            continue
+
+        phrases = extract_robust_phrases(scues)
+        if len(phrases) < 5:
+            print(f"  フレーズ抽出不足（{len(phrases)}個）、スキップ")
+            continue
+
+        matched = None
+        for cid in candidates:
+            matched = match_candidate(sid, scues, sdur, phrases, cid)
+            if matched:
+                break
+
+        if not matched:
+            print("  一致セグメントなし（条件不一致）")
+            continue
 
         record = {
             'shorts_id': sid,
             'shorts_title': title,
-            'shorts_duration': meta.get('duration', 0),
+            'shorts_duration': sdur,
             'view_count': vc,
             'like_count': lc,
             'like_rate': lr,
-            'origin_id': matched_res['origin_id'],
-            'start_sec': matched_res['start_sec'],
-            'end_sec': matched_res['end_sec'],
-            'duration': matched_res['duration'],
-            'start_str': format_seconds(matched_res['start_sec']),
-            'end_str': format_seconds(matched_res['end_sec']),
-            'hits': list(hits)[:10],
-            'shorts_text_snippet': matched_res.get('shorts_text_snippet', ''),
-            'origin_text_snippet': matched_res.get('origin_text_snippet', '')
+            'origin_id': matched['origin_id'],
+            'start_sec': matched['start_sec'],
+            'end_sec': matched['end_sec'],
+            'duration': matched['duration'],
+            'start_str': matched['start_str'],
+            'end_str': matched['end_str'],
+            'hits': matched['hits'],
+            'shorts_text_snippet': matched['shorts_text_snippet'],
+            'origin_text_snippet': matched['origin_text_snippet']
         }
 
         results.append(record)
         processed_shorts_ids.add(sid)
 
-        # 1件ヒットするごとにリアルタイム自動保存
         save_data(results)
-        print(f"  🎉 【照合成功】累計: {len(results)} 件 | 元配信: {record['origin_id']} ({record['start_str']}〜{record['end_str']}, 一致: {len(hits)}個)")
+        print(f"  🎉 【照合成功】累計: {len(results)} 件 | 元配信: {record['origin_id']} ({record['start_str']}〜{record['end_str']}, 一致: {len(record['hits'])}個)")
 
     print("\n" + "=" * 65)
     print(f"🏁 全件走査完了！ 合計 {len(results)} 件のマッチデータを保存しました。")
