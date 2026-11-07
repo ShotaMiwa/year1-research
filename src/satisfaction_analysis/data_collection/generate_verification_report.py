@@ -39,7 +39,16 @@ def generate_verification_html(results: list, output_path: Path):
         hits_html = "".join([f'<span class="hit-tag">{h}</span>' for h in r.get('hits', [])])
         
         card = f"""
-        <div class="card" id="card-{idx}">
+        <div class="card" id="card-{idx}" 
+             data-view-count="{r.get('view_count', 0)}"
+             data-like-count="{r.get('like_count', 0)}"
+             data-like-rate="{r.get('like_rate', 0.0):.2f}"
+             data-origin-id="{r.get('origin_id', '')}"
+             data-start-sec="{r.get('start_sec', 0)}"
+             data-end-sec="{r.get('end_sec', 0)}"
+             data-start-str="{r.get('start_str', '')}"
+             data-end-str="{r.get('end_str', '')}"
+             data-duration="{r.get('duration', 0):.1f}">
             <div class="card-header">
                 <h3>#{idx}: {r.get('shorts_title', '不明なタイトル')}</h3>
                 <div>{status_badge}</div>
@@ -47,7 +56,8 @@ def generate_verification_html(results: list, output_path: Path):
             <div class="card-body">
                 <div class="meta-row">
                     <div><b>Shorts ID:</b> <a href="{shorts_link}" target="_blank">{r['shorts_id']}</a> (尺: {r.get('shorts_duration', 0):.1f}s)</div>
-                    <div><b>いいね率:</b> {r.get('like_rate', 0.0):.2f}%</div>
+                    <div><b>再生数:</b> {r.get('view_count', 0):,} 回 | <b>いいね:</b> {r.get('like_count', 0):,} 件</div>
+                    <div><b>いいね率:</b> <span class="badge badge-rate">{r.get('like_rate', 0.0):.2f}%</span></div>
                     <div><b>元配信ID:</b> <a href="{origin_link}" target="_blank">{r.get('origin_id', '未検出')}</a></div>
                     <div><b>特定区間:</b> {r.get('start_str', '--')} 〜 {r.get('end_str', '--')} (尺: {r.get('duration', 0):.1f}s)</div>
                 </div>
@@ -191,6 +201,7 @@ def generate_verification_html(results: list, output_path: Path):
         .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }}
         .badge-success {{ background: #e6f4ea; color: #137333; }}
         .badge-danger {{ background: #fce8e6; color: #c5221f; }}
+        .badge-rate {{ background: #e8f0fe; color: #1a73e8; font-size: 13px; }}
         .card-body {{ padding: 20px; }}
         .meta-row {{
             display: grid;
@@ -657,15 +668,39 @@ def generate_verification_html(results: list, output_path: Path):
         }}
 
         function exportDecisionsCSV() {{
-            const rows = [['card_id', 'status', 'start_sec', 'end_sec', 'start_str', 'end_str']];
-            for (const [idx, d] of Object.entries(decisions)) {{
-                rows.push([idx, d.status, d.start_sec || '', d.end_sec || '', d.start_str || '', d.end_str || '']);
-            }}
-            const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.join(',')).join('\\n');
+            const rows = [['card_id', 'shorts_id', 'title', 'view_count', 'like_count', 'like_rate', 'status', 'origin_id', 'start_sec', 'end_sec', 'start_str', 'end_str', 'duration']];
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, idx) => {{
+                const cardId = idx + 1;
+                const d = decisions[cardId] || {{ status: 'PENDING' }};
+                
+                // カード要素からメタデータを取得
+                const title = card.querySelector('h3') ? card.querySelector('h3').innerText.replace(/^#\d+:\s*/, '') : '';
+                const shortsLink = card.querySelector('.meta-row a');
+                const shortsId = shortsLink ? shortsLink.innerText : '';
+                
+                rows.push([
+                    cardId,
+                    `"${{shortsId}}"`,
+                    `"${{title.replace(/"/g, '""')}}"`,
+                    card.dataset.viewCount || '',
+                    card.dataset.likeCount || '',
+                    card.dataset.likeRate || '',
+                    d.status,
+                    `"${{card.dataset.originId || ''}}"`,
+                    d.start_sec !== undefined ? d.start_sec : (card.dataset.startSec || ''),
+                    d.end_sec !== undefined ? d.end_sec : (card.dataset.endSec || ''),
+                    `"${{d.start_str || card.dataset.startStr || ''}}"`,
+                    `"${{d.end_str || card.dataset.endStr || ''}}"`,
+                    d.duration !== undefined ? d.duration : (card.dataset.duration || '')
+                ]);
+            }});
+
+            const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + rows.map(e => e.join(',')).join('\\n');
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement('a');
             link.setAttribute('href', encodedUri);
-            link.setAttribute('download', 'verified_alignments.csv');
+            link.setAttribute('download', 'verified_shorts_dataset.csv');
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);

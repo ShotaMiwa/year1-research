@@ -175,6 +175,8 @@ def run_pilot_batch(target_matches=100):
                     'shorts_id': sid,
                     'shorts_title': meta.get('title', item.get('title')),
                     'shorts_duration': sdur,
+                    'view_count': vc,
+                    'like_count': lc,
                     'like_rate': lr,
                     'origin_id': cid,
                     'start_sec': s_sec,
