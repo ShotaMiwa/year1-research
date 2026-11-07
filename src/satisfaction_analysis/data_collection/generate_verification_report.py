@@ -1,0 +1,578 @@
+# -*- coding: utf-8 -*-
+"""
+アライメント結果を目視確認（2重チェック）するためのインタラクティブHTMLレポート生成スクリプト。
+Shorts動画と元配信の該当区間を左右に並べ、ワンクリックで該当秒数から再生・字幕対照・合否判定ができる。
+"""
+
+import json
+import os
+from pathlib import Path
+
+def generate_verification_html(results: list, output_path: Path):
+    """
+    results: list of dict, 各要素は以下を含む:
+      - shorts_id: str
+      - shorts_title: str
+      - shorts_url: str
+      - shorts_duration: float
+      - like_rate: float
+      - origin_id: str
+      - origin_url: str (タイムスタンプ付き)
+      - start_sec: float
+      - end_sec: float
+      - duration: float
+      - start_str: str
+      - end_str: str
+      - hits: list of str
+      - shorts_text_snippet: str
+      - origin_text_snippet: str
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    cards_html = []
+    for idx, r in enumerate(results, 1):
+        status_badge = '<span class="badge badge-success">照合一致</span>' if r.get('origin_id') else '<span class="badge badge-danger">不一致</span>'
+        
+        origin_link = f"https://www.youtube.com/watch?v={r.get('origin_id')}&t={int(r.get('start_sec', 0))}s" if r.get('origin_id') else "#"
+        shorts_link = f"https://www.youtube.com/shorts/{r['shorts_id']}"
+        
+        hits_html = "".join([f'<span class="hit-tag">{h}</span>' for h in r.get('hits', [])])
+        
+        card = f"""
+        <div class="card" id="card-{idx}">
+            <div class="card-header">
+                <h3>#{idx}: {r.get('shorts_title', '不明なタイトル')}</h3>
+                <div>{status_badge}</div>
+            </div>
+            <div class="card-body">
+                <div class="meta-row">
+                    <div><b>Shorts ID:</b> <a href="{shorts_link}" target="_blank">{r['shorts_id']}</a> (尺: {r.get('shorts_duration', 0):.1f}s)</div>
+                    <div><b>いいね率:</b> {r.get('like_rate', 0.0):.2f}%</div>
+                    <div><b>元配信ID:</b> <a href="{origin_link}" target="_blank">{r.get('origin_id', '未検出')}</a></div>
+                    <div><b>特定区間:</b> {r.get('start_str', '--')} 〜 {r.get('end_str', '--')} (尺: {r.get('duration', 0):.1f}s)</div>
+                </div>
+
+                <div class="comparison-grid">
+                    <div class="pane">
+                        <div class="pane-header">
+                            <h4>📱 Shorts動画</h4>
+                            <a href="{shorts_link}" target="_blank" class="play-btn">▶️ YouTubeで開く ↗</a>
+                        </div>
+                        <div class="video-container">
+                            <iframe src="https://www.youtube.com/embed/{r['shorts_id']}?controls=1&rel=0" 
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                                    allowfullscreen></iframe>
+                        </div>
+                        <div class="text-box">
+                            <div class="text-label">Shorts字幕テキスト:</div>
+                            <p>{r.get('shorts_text_snippet', '字幕なし')}</p>
+                        </div>
+                    </div>
+
+                    <div class="pane">
+                        <div class="pane-header">
+                            <h4>🎥 元配信（特定区間: {r.get('start_str', '00:00')} 〜 {r.get('end_str', '00:00')}）</h4>
+                            <a href="{origin_link}" target="_blank" class="play-btn">▶️ 該当秒からYouTubeで開く ↗</a>
+                        </div>
+                        <div class="target-time-banner">
+                            🎯 照合開始位置: <b>{r.get('start_str', '00:00')}</b>（{int(r.get('start_sec', 0))}秒） / 終了予定: <b>{r.get('end_str', '00:00')}</b>（{int(r.get('end_sec', 0))}秒）
+                        </div>
+                        <div class="video-container">
+                            <iframe src="https://www.youtube.com/embed/{r.get('origin_id')}?start={int(r.get('start_sec', 0))}&end={int(r.get('end_sec', 0)) + 30}&controls=1&rel=0" 
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                                    allowfullscreen></iframe>
+                        </div>
+                        <div class="text-box">
+                            <div class="text-label">元配信字幕テキスト（該当区間）:</div>
+                            <p>{r.get('origin_text_snippet', '該当字幕なし')}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="hits-section">
+                    <b>完全一致したフレーズ ({len(r.get('hits', []))}個):</b>
+                    <div class="hits-container">{hits_html}</div>
+                </div>
+
+                <div class="check-actions">
+                    <div class="decision-group">
+                        <label><b>判定:</b></label>
+                        <button class="btn btn-ok" onclick="markDecision({idx}, 'OK')">✅ 承認 (OK)</button>
+                        <button class="btn btn-ng" onclick="markDecision({idx}, 'NG')">❌ 却下 (NG)</button>
+                        <button class="btn btn-adj" onclick="toggleAdjustPanel({idx})">⚠️ 区間を微調整</button>
+                    </div>
+                    <div class="status-msg" id="status-{idx}">未チェック</div>
+                </div>
+
+                <!-- 微調整用インタラクティブパネル -->
+                <div class="adjust-panel" id="adj-panel-{idx}" style="display: none;">
+                    <div class="adj-header">
+                        <b>⏱️ 区間微調整ツール（クリックで直感的に調整）</b>
+                        <span class="adj-note">※「現在再生中の位置」ボタンを押すとプレーヤーの現時刻を自動取得できます</span>
+                    </div>
+                    <div class="adj-controls">
+                        <div class="adj-item">
+                            <label>開始時間 (T_start):</label>
+                            <div class="time-adjuster">
+                                <button class="btn-step" onclick="stepTime({idx}, 'start', -5)">-5秒</button>
+                                <button class="btn-step" onclick="stepTime({idx}, 'start', -1)">-1秒</button>
+                                <input type="text" class="time-input" id="time-start-{idx}" value="{r.get('start_str', '00:00:00')}">
+                                <button class="btn-step" onclick="stepTime({idx}, 'start', +1)">+1秒</button>
+                                <button class="btn-step" onclick="stepTime({idx}, 'start', +5)">+5秒</button>
+                                <button class="btn-curr" onclick="setFromPlayer({idx}, 'start')">📍 現在位置を開始に設定</button>
+                            </div>
+                        </div>
+                        <div class="adj-item">
+                            <label>終了時間 (T_end):</label>
+                            <div class="time-adjuster">
+                                <button class="btn-step" onclick="stepTime({idx}, 'end', -5)">-5秒</button>
+                                <button class="btn-step" onclick="stepTime({idx}, 'end', -1)">-1秒</button>
+                                <input type="text" class="time-input" id="time-end-{idx}" value="{r.get('end_str', '00:00:00')}">
+                                <button class="btn-step" onclick="stepTime({idx}, 'end', +1)">+1秒</button>
+                                <button class="btn-step" onclick="stepTime({idx}, 'end', +5)">+5秒</button>
+                                <button class="btn-curr" onclick="setFromPlayer({idx}, 'end')">📍 現在位置を終了に設定</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="adj-footer">
+                        <button class="btn btn-ok" onclick="saveAdjustment({idx})">💾 この調整時間で保存・承認</button>
+                        <button class="btn-cancel" onclick="toggleAdjustPanel({idx})">閉じる</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        cards_html.append(card)
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shorts × 元配信アライメント 人間目視検証レポート</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f4f6f8;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }}
+        .header {{
+            max-width: 1200px;
+            margin: 0 auto 20px auto;
+            background: #fff;
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .header h1 {{ margin: 0; font-size: 24px; color: #1a73e8; }}
+        .header .summary-stats {{ font-size: 14px; color: #666; }}
+        .container {{ max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }}
+        .card {{
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            overflow: hidden;
+            border: 1px solid #e1e4e8;
+        }}
+        .card-header {{
+            background: #fafbfc;
+            padding: 14px 20px;
+            border-bottom: 1px solid #eaecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .card-header h3 {{ margin: 0; font-size: 17px; }}
+        .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }}
+        .badge-success {{ background: #e6f4ea; color: #137333; }}
+        .badge-danger {{ background: #fce8e6; color: #c5221f; }}
+        .card-body {{ padding: 20px; }}
+        .meta-row {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            background: #f8f9fa;
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }}
+        .comparison-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 16px;
+        }}
+        @media (max-width: 768px) {{
+            .comparison-grid {{ grid-template-columns: 1fr; }}
+        }}
+        .pane h4 {{ margin: 0; font-size: 15px; color: #444; }}
+        .pane-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }}
+        .play-btn {{
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            background: #e8f0fe;
+            color: #1a73e8;
+            font-size: 12px;
+            font-weight: bold;
+            border-radius: 4px;
+            text-decoration: none;
+            border: 1px solid #d2e3fc;
+            transition: background 0.2s;
+        }}
+        .play-btn:hover {{
+            background: #d2e3fc;
+        }}
+        .target-time-banner {{
+            background: #fff8e1;
+            color: #b78103;
+            border: 1px solid #ffe082;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }}
+        .video-container {{
+            position: relative;
+            padding-bottom: 56.25%;
+            height: 0;
+            background: #000;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }}
+        .video-container iframe {{
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            border: none;
+        }}
+        .text-box {{
+            background: #fdfdfd;
+            border: 1px solid #e1e4e8;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+            max-height: 120px;
+            overflow-y: auto;
+        }}
+        .text-label {{ font-size: 11px; font-weight: bold; color: #888; margin-bottom: 4px; }}
+        .hits-section {{
+            margin-top: 10px;
+            background: #eef7fe;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+        }}
+        .hits-container {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }}
+        .hit-tag {{
+            background: #fff;
+            border: 1px solid #bedef8;
+            color: #1a73e8;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+        }}
+        .check-actions {{
+            margin-top: 18px;
+            padding-top: 14px;
+            border-top: 1px dashed #e1e4e8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }}
+        .decision-group {{ display: flex; align-items: center; gap: 10px; }}
+        .btn {{
+            padding: 7px 16px;
+            font-size: 13px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }}
+        .btn:hover {{ opacity: 0.85; }}
+        .btn-ok {{ background: #137333; color: #fff; }}
+        .btn-ng {{ background: #c5221f; color: #fff; }}
+        .btn-adj {{ background: #ea8600; color: #fff; }}
+        .status-msg {{ font-size: 13px; font-weight: bold; color: #666; }}
+        
+        /* 微調整パネルのスタイル */
+        .adjust-panel {{
+            margin-top: 15px;
+            background: #fffdf5;
+            border: 1px solid #fedc8c;
+            border-radius: 6px;
+            padding: 14px 18px;
+        }}
+        .adj-header {{
+            font-size: 13px;
+            color: #855700;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }}
+        .adj-note {{ font-size: 11px; color: #888; }}
+        .adj-controls {{
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }}
+        .adj-item {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+        }}
+        .adj-item label {{ width: 140px; font-weight: bold; color: #555; }}
+        .time-adjuster {{ display: flex; align-items: center; gap: 6px; }}
+        .time-input {{
+            width: 90px;
+            padding: 5px 8px;
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }}
+        .btn-step {{
+            background: #f1f3f4;
+            border: 1px solid #dadce0;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }}
+        .btn-step:hover {{ background: #e8eaed; }}
+        .btn-curr {{
+            background: #e8f0fe;
+            color: #1a73e8;
+            border: 1px solid #d2e3fc;
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: bold;
+        }}
+        .btn-curr:hover {{ background: #d2e3fc; }}
+        .adj-footer {{
+            margin-top: 14px;
+            display: flex;
+            gap: 10px;
+        }}
+        .btn-cancel {{
+            background: #f1f3f4;
+            color: #555;
+            border: 1px solid #ccc;
+            padding: 6px 14px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }}
+    </style>
+    <script>
+        const STORAGE_KEY = 'shorts_alignment_decisions_v1';
+        let decisions = {{}};
+
+        // ページロード時に localStorage から判定を復元
+        window.addEventListener('DOMContentLoaded', () => {{
+            loadDecisions();
+        }});
+
+        function loadDecisions() {{
+            try {{
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {{
+                    decisions = JSON.parse(saved);
+                    for (const [idx, data] of Object.entries(decisions)) {{
+                        applyDecisionUI(idx, data);
+                    }}
+                }}
+            }} catch(e) {{
+                console.error('Failed to load decisions:', e);
+            }}
+        }}
+
+        function saveDecisions() {{
+            try {{
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(decisions));
+            }} catch(e) {{
+                console.error('Failed to save decisions:', e);
+            }}
+        }}
+
+        function applyDecisionUI(idx, data) {{
+            const el = document.getElementById('status-' + idx);
+            const card = document.getElementById('card-' + idx);
+            if (!el || !card) return;
+
+            if (data.status === 'OK') {{
+                el.innerText = '✅ 承認済み (OK)';
+                el.style.color = '#137333';
+                card.style.borderColor = '#137333';
+            }} else if (data.status === 'NG') {{
+                el.innerText = '❌ 却下 (NG)';
+                el.style.color = '#c5221f';
+                card.style.borderColor = '#c5221f';
+            }} else if (data.status === 'ADJUSTED') {{
+                el.innerText = `⚠️ 修正承認: ${{data.start_str}} 〜 ${{data.end_str}} (尺: ${{data.duration}}s)`;
+                el.style.color = '#ea8600';
+                card.style.borderColor = '#ea8600';
+                const sIn = document.getElementById(`time-start-${{idx}}`);
+                const eIn = document.getElementById(`time-end-${{idx}}`);
+                if (sIn) sIn.value = data.start_str;
+                if (eIn) eIn.value = data.end_str;
+            }}
+        }}
+
+        function markDecision(idx, val) {{
+            decisions[idx] = {{ status: val }};
+            saveDecisions();
+            applyDecisionUI(idx, decisions[idx]);
+        }}
+
+        function toggleAdjustPanel(idx) {{
+            const p = document.getElementById('adj-panel-' + idx);
+            p.style.display = (p.style.display === 'none') ? 'block' : 'none';
+        }}
+
+        function timeStrToSec(str) {{
+            const parts = str.trim().split(':').map(Number);
+            if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+            if (parts.length === 2) return parts[0]*60 + parts[1];
+            return Number(str) || 0;
+        }}
+
+        function secToTimeStr(sec) {{
+            sec = Math.max(0, Math.round(sec));
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${{pad(h)}}:${{pad(m)}}:${{pad(s)}}`;
+        }}
+
+        function stepTime(idx, target, diffSec) {{
+            const input = document.getElementById(`time-${{target}}-${{idx}}`);
+            const curSec = timeStrToSec(input.value);
+            const newSec = Math.max(0, curSec + diffSec);
+            input.value = secToTimeStr(newSec);
+            seekIframe(idx, newSec);
+        }}
+
+        function setFromPlayer(idx, target) {{
+            const currentStr = document.getElementById(`time-${{target}}-${{idx}}`).value;
+            const val = prompt(`動画のシークバーを見ながら、調整後の${{target === 'start' ? '開始' : '終了'}}時間（時:分:秒 または 分:秒）を入力してください:`, currentStr);
+            if (val) {{
+                const sec = timeStrToSec(val);
+                document.getElementById(`time-${{target}}-${{idx}}`).value = secToTimeStr(sec);
+                seekIframe(idx, sec);
+            }}
+        }}
+
+        function seekIframe(idx, sec) {{
+            const iframe = document.querySelector(`#card-${{idx}} .pane:nth-child(2) iframe`);
+            if (iframe) {{
+                iframe.contentWindow.postMessage(JSON.stringify({{
+                    event: 'command',
+                    func: 'seekTo',
+                    args: [sec, true]
+                }}), '*');
+            }}
+        }}
+
+        function saveAdjustment(idx) {{
+            const sStr = document.getElementById(`time-start-${{idx}}`).value;
+            const eStr = document.getElementById(`time-end-${{idx}}`).value;
+            const sSec = timeStrToSec(sStr);
+            const eSec = timeStrToSec(eStr);
+            
+            decisions[idx] = {{
+                status: 'ADJUSTED',
+                start_sec: sSec,
+                end_sec: eSec,
+                start_str: sStr,
+                end_str: eStr,
+                duration: eSec - sSec
+            }};
+
+            saveDecisions();
+            applyDecisionUI(idx, decisions[idx]);
+            toggleAdjustPanel(idx);
+        }}
+
+        function exportDecisionsCSV() {{
+            const rows = [['card_id', 'status', 'start_sec', 'end_sec', 'start_str', 'end_str']];
+            for (const [idx, d] of Object.entries(decisions)) {{
+                rows.push([idx, d.status, d.start_sec || '', d.end_sec || '', d.start_str || '', d.end_str || '']);
+            }}
+            const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.join(',')).join('\\n');
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', 'verified_alignments.csv');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }}
+
+        function resetAllDecisions() {{
+            if (confirm('すべての判定・修正履歴をリセットしますか？')) {{
+                localStorage.removeItem(STORAGE_KEY);
+                location.reload();
+            }}
+        }}
+    </script>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>Shorts × 元配信アライメント 検証レポート</h1>
+            <div class="summary-stats">対象件数: {len(results)}件 | 目視検証プロトコル</div>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button class="btn btn-ok" onclick="exportDecisionsCSV()">📥 判定結果をCSV出力</button>
+            <button class="btn btn-adj" onclick="resetAllDecisions()">🔄 全リセット</button>
+        </div>
+    </div>
+    <div class="container">
+        {"".join(cards_html)}
+    </div>
+</body>
+</html>
+"""
+    output_path.write_text(html_content, encoding='utf-8')
+    print(f"✅ 目視検証用HTMLレポートを生成しました: {output_path}")
+
+if __name__ == '__main__':
+    # 動作確認用サンプル
+    sample_results = [{
+        "shorts_id": "gbI8-X7YMBQ",
+        "shorts_title": "【睡眠】ショートスリーパー堀大輔について語るひろゆき",
+        "shorts_duration": 57.8,
+        "like_rate": 3.82,
+        "origin_id": "9XlbakibD1Q",
+        "start_sec": 9194.2,
+        "end_sec": 9238.4,
+        "duration": 44.2,
+        "start_str": "02:33:14",
+        "end_str": "02:33:58",
+        "hits": ["コメンテーターとして", "質問してましたが", "ショートスリーパー堀", "カリフォルニアバーク", "一応質問をしてます"],
+        "shorts_text_snippet": "コメンテーターとして質問してましたが ショートスリーパー堀大輔さんを完全無視... カリフォルニアバークレイ大学の睡眠学をちゃんとやってる先生が来たので...",
+        "origin_text_snippet": "の睡眠についての中で弘樹さんも コメンテーターとして質問してましたが ショートスリーパー堀大輔さんを完全った... え何時が前じゃなくて半年くらい前のやつですね..."
+    }]
+    out = Path(__file__).resolve().parents[3] / "docs/paper/verification_report.html"
+    generate_verification_html(sample_results, out)
+
