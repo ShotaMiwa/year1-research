@@ -1,0 +1,12 @@
+﻿feature,feature_label,pearson_r,pearson_p,pearson_ci_95,spearman_rho,spearman_p,significant_p05,significant_p10
+question_ratio,疑問文比率 (question_ratio),-0.0253,0.8274,"[-0.248, 0.200]",-0.057,0.6223,No,No
+comment_semantic_variance,コメント意味多様性 (comment_semantic_variance),0.0768,0.5066,"[-0.150, 0.296]",-0.0064,0.9561,No,No
+segment_length_sec,動画尺(秒) (segment_length_sec),0.0304,0.7928,"[-0.195, 0.253]",0.0928,0.422,No,No
+comment_rate,コメント密度 (comment_rate),0.0946,0.4131,"[-0.132, 0.312]",0.099,0.3915,No,No
+grass_ratio,草・笑い率 (grass_ratio),0.1022,0.3764,"[-0.125, 0.319]",0.1134,0.3263,No,No
+exclamation_ratio,感嘆符比率 (exclamation_ratio),0.0134,0.908,"[-0.211, 0.237]",0.0551,0.6342,No,No
+sentiment_polarity,コメント感情極性 (sentiment_polarity),-0.0879,0.4472,"[-0.306, 0.139]",-0.0857,0.4588,No,No
+subtitle_sentiment_polarity,字幕感情極性 (subtitle_sentiment_polarity),0.1025,0.3749,"[-0.124, 0.319]",0.0959,0.4067,No,No
+speech_rate,発話速度 (speech_rate),-0.1836,0.11,"[-0.391, 0.042]",-0.2869,0.0114,Yes,Yes
+pause_ratio,ポーズ率 (pause_ratio),-0.1129,0.3284,"[-0.329, 0.114]",-0.0972,0.4006,No,No
+sub_comment_similarity,字幕-コメント類似度 (sub_comment_similarity),0.0057,0.9608,"[-0.219, 0.229]",-0.0475,0.6817,No,No
