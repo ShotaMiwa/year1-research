@@ -34,3 +34,4 @@ data/raw/chat/*.vtt
 data/raw/chat/*.jsonl
 !data/raw/chat/shorts_playlist_all.jsonl
 data/raw/chat/*.log
+data/raw/chat/*.live_chat.json*
