@@ -1,7 +1,7 @@
 ﻿feature,feature_label,pearson_r,pearson_p,pearson_ci_95,spearman_rho,spearman_p,significant_p05,significant_p10
 question_ratio,疑問文比率 (question_ratio),-0.0253,0.8274,"[-0.248, 0.200]",-0.057,0.6223,No,No
 comment_semantic_variance,コメント意味多様性 (comment_semantic_variance),0.0768,0.5066,"[-0.150, 0.296]",-0.0064,0.9561,No,No
-segment_length_sec,動画尺(秒) (segment_length_sec),0.0304,0.7928,"[-0.195, 0.253]",0.0928,0.422,No,No
+segment_length_sec,動画尺(秒) (segment_length_sec),0.0782,0.4989,"[-0.148, 0.297]",0.1972,0.0857,No,Yes
 comment_rate,コメント密度 (comment_rate),0.0946,0.4131,"[-0.132, 0.312]",0.099,0.3915,No,No
 grass_ratio,草・笑い率 (grass_ratio),0.1022,0.3764,"[-0.125, 0.319]",0.1134,0.3263,No,No
 exclamation_ratio,感嘆符比率 (exclamation_ratio),0.0134,0.908,"[-0.211, 0.237]",0.0551,0.6342,No,No
