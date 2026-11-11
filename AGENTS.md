@@ -22,7 +22,8 @@
 
 - **図表（グラフ・散布図・ヒートマップ等）**:
   - 保存先: `docs/paper/figures/`
-  - 命名規則: `exp{番号}_{説明}.png`（例: `exp2_scatter_grid_ci.png`）
+  - 形式: **PDF（`.pdf`）を標準出力**すること（論文用ベクター形式）。Markdownプレビュー用に同名の高解像度PNG（`.png`）も併録する。
+  - 命名規則: `exp{番号}_{説明}.pdf` / `exp{番号}_{説明}.png`（例: `exp2_scatter_grid_ci.pdf`）
 - **集計表・生データ（CSV・表形式データ）**:
   - 保存先: `docs/paper/tables/`
   - 命名規則: `exp{番号}_{説明}.csv`（例: `exp2_bivariate_correlations_ci.csv`）
