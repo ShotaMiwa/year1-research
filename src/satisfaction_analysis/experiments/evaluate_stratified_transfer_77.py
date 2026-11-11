@@ -78,7 +78,7 @@ def main():
     ax.set_xscale("log")
     ax.set_xlabel("再生回数 (Views, 対数スケール)", fontsize=11)
     ax.set_ylabel("いいね率 (%)", fontsize=11)
-    ax.set_title(f"YouTube Shorts 再生回数 vs いいね率 (N=77)\nSpearman ρ = {r_spearman:.3f} (希釈バイアスの検証)", fontsize=12)
+    ax.set_title(f"YouTube Shorts 再生回数 vs いいね率 (N=77)\nSpearman ρ = {r_spearman:.3f}", fontsize=12)
     ax.grid(True, linestyle="--", alpha=0.6)
     fig.tight_layout()
     fig.savefig(FIG_DIR / "exp_view_count_vs_like_rate.png", dpi=200)
