@@ -42,3 +42,4 @@ plt.rcParams['pdf.fonttype'] = 42  # TrueTypeフォント埋め込み（論文�
 plt.rcParams['ps.fonttype'] = 42
 plt.rcParams['axes.unicode_minus'] = False
 ```
+
