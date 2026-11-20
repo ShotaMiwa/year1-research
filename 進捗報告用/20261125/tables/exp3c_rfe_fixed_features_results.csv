@@ -1,0 +1,7 @@
+﻿feature_set,model,features,transfer_correct,transfer_total,transfer_accuracy
+Core3 (question + pause + seg_len),Linear SVM,question_ratio + pause_ratio + segment_length_sec,16,23,69.6%
+Core3 (question + pause + seg_len),Logistic Regression,question_ratio + pause_ratio + segment_length_sec,16,23,69.6%
+Core4 (Core3 + sem_var),Linear SVM,question_ratio + pause_ratio + segment_length_sec + comment_semantic_variance,17,23,73.9%
+Core4 (Core3 + sem_var),Logistic Regression,question_ratio + pause_ratio + segment_length_sec + comment_semantic_variance,17,23,73.9%
+Core5 (Core4 + sentiment),Linear SVM,question_ratio + pause_ratio + segment_length_sec + comment_semantic_variance + sentiment_polarity,16,23,69.6%
+Core5 (Core4 + sentiment),Logistic Regression,question_ratio + pause_ratio + segment_length_sec + comment_semantic_variance + sentiment_polarity,16,23,69.6%
