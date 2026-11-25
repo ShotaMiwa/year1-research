@@ -1,0 +1,6 @@
+﻿set_name,features,svm_acc,lr_acc
+New Core2,question_ratio + segment_length_sec,73.9%,73.9%
+New Core3,question_ratio + segment_length_sec + comment_semantic_variance,69.6%,73.9%
+New Core4,question_ratio + segment_length_sec + comment_semantic_variance + grass_ratio,60.9%,56.5%
+New Core4b,question_ratio + segment_length_sec + comment_semantic_variance + sentiment_polarity,60.9%,69.6%
+New Core5,question_ratio + segment_length_sec + comment_semantic_variance + grass_ratio + sentiment_polarity,52.2%,56.5%
