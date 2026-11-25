@@ -1,0 +1,13 @@
+﻿rank,feature,svm_weight_abs,lr_weight_abs
+1,segment_length_sec,0.6088,0.4595
+2,comment_semantic_variance,0.4213,0.3029
+3,grass_ratio,0.4038,0.2741
+4,sub_comment_similarity,0.33,0.1872
+5,speech_rate,0.3255,0.1884
+6,comment_rate,0.2189,0.2236
+7,subtitle_sentiment_polarity,0.2122,0.1853
+8,comment_vocab_diversity,0.1132,0.0109
+9,sentiment_polarity,0.1054,0.0251
+10,exclamation_ratio,0.0612,0.0898
+11,question_ratio,0.0602,0.0393
+12,pause_ratio,0.0032,0.0486
