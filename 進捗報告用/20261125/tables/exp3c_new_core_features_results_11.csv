@@ -1,6 +1,8 @@
-﻿set_name,features,svm_acc,lr_acc
-New Core2,question_ratio + segment_length_sec,73.9%,73.9%
-New Core3,question_ratio + segment_length_sec + comment_semantic_variance,69.6%,73.9%
-New Core4,question_ratio + segment_length_sec + comment_semantic_variance + grass_ratio,60.9%,56.5%
-New Core4b,question_ratio + segment_length_sec + comment_semantic_variance + sentiment_polarity,60.9%,69.6%
-New Core5,question_ratio + segment_length_sec + comment_semantic_variance + grass_ratio + sentiment_polarity,52.2%,56.5%
+﻿group,label,features,svm_correct,svm_acc,lr_correct,lr_acc
+1変数,疑問比率 単体,question_ratio,14 / 23,60.86956521739131,16 / 23,69.56521739130434
+1変数,動画尺 単体,segment_length_sec,16 / 23,69.56521739130434,16 / 23,69.56521739130434
+1変数,コメント意味分散 単体,comment_semantic_variance,11 / 23,47.82608695652174,9 / 23,39.130434782608695
+2変数,疑問比率 ＋ 動画尺,question_ratio + segment_length_sec,17 / 23,73.91304347826086,17 / 23,73.91304347826086
+2変数,動画尺 ＋ コメント意味分散,segment_length_sec + comment_semantic_variance,14 / 23,60.86956521739131,13 / 23,56.52173913043478
+2変数,疑問比率 ＋ コメント意味分散,question_ratio + comment_semantic_variance,12 / 23,52.17391304347826,10 / 23,43.47826086956522
+3変数,上位3変数 統合,question_ratio + segment_length_sec + comment_semantic_variance,16 / 23,69.56521739130434,17 / 23,73.91304347826086
